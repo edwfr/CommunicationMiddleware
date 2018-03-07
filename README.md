@@ -4,5 +4,5 @@ The widespread use of mobile and wearable devices has led to a growing need of i
 
 ## Project Structure
 
-The project is composed by two parts, the one concerning the middleware that is contained in the bt_lib package and the one concerning a testing application that is contained in the package ```app```.
+The project is composed by two parts, the one concerning the middleware that is contained in the ```bt_lib```  package and the one concerning a testing application that is contained in the package ```app```.
 
