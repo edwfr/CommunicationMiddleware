@@ -4,22 +4,19 @@ import android.Manifest;
 import android.bluetooth.BluetoothDevice;
 import android.content.pm.PackageManager;
 import android.os.Build;
+import android.os.Bundle;
 import android.support.v4.app.DialogFragment;
 import android.support.v4.app.FragmentTransaction;
-import android.os.Bundle;
 import android.util.Log;
 import android.widget.ArrayAdapter;
 import android.widget.Button;
 import android.widget.ListView;
-import android.widget.Toast;
 import android.widget.ToggleButton;
 
 import com.edoardo.bt_lib.activity.BluetoothFragmentActivity;
 import com.edoardo.bt_lib.bluetooth.BluetoothManager;
-import com.edoardo.bt_lib.enums.Template;
-import com.edoardo.bt_lib.msg.BluetoothCommunicatorPair;
 import com.edoardo.bt_lib.enums.EventType;
-import com.edoardo.bt_lib.msg.NoMsgException;
+import com.edoardo.bt_lib.enums.Template;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -36,26 +33,23 @@ public class MainActivity extends BluetoothFragmentActivity implements Discovere
     private static final int PERMISSION_REQUEST_COARSE_LOCATION = 1;
     private final static String LgId = "50:55:27:42:C5:98";
     private final static String SamsungId = "08:3D:88:BF:D7:A1";
+    private static final String CentoS = "SSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSS";
     @BindView(R.id.listView)
     ListView mListView;
     ArrayAdapter<String> mAdapter;
     List<String> mListLog;
-
     @BindView(R.id.send)
     Button mSendBtn;
-
     @BindView(R.id.client)
     ToggleButton mClientToggleBtn;
     @BindView(R.id.serveur)
     ToggleButton mServerToggleBtn;
-
     @BindView(R.id.connect)
     Button mConnectBtn;
     @BindView(R.id.disconnect)
     Button mDisconnectBtn;
     @BindView(R.id.receiveBtn)
     Button mReceiveButton;
-
     @BindView(R.id.publish)
     Button mPublishButton;
     @BindView(R.id.subscribeHigh)
@@ -64,7 +58,6 @@ public class MainActivity extends BluetoothFragmentActivity implements Discovere
     ToggleButton subscribeMedium;
     @BindView(R.id.subscribeLow)
     ToggleButton subscribeLow;
-
     @BindView(R.id.out)
     Button mOut;
     @BindView(R.id.inA)
@@ -182,8 +175,6 @@ public class MainActivity extends BluetoothFragmentActivity implements Discovere
         }
 
     }
-
-    private static final String CentoS = "SSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSS";
 
     @OnClick(R.id.publish)
     public void publishMsg(){
