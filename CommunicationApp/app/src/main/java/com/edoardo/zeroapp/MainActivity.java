@@ -142,7 +142,7 @@ public class MainActivity extends BluetoothFragmentActivity implements Discovere
     @OnClick(R.id.disconnect)
     public void disconnectButton() {
         if (getTypeBluetooth() == BluetoothManager.TypeBluetooth.Client) {
-            setLogText("===> Disconnecting client");
+            setLogText("===> Disconnecting Client");
             mClientToggleBtn.setChecked(false);
         } else if (getTypeBluetooth() == BluetoothManager.TypeBluetooth.Server) {
             setLogText("===> Disconnecting server");
