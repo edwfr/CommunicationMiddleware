@@ -11,21 +11,21 @@ import com.edoardo.bt_lib.database.AppDatabase;
 import com.edoardo.bt_lib.database.model.Msg;
 import com.edoardo.bt_lib.enums.EventType;
 import com.edoardo.bt_lib.enums.Template;
-import com.edoardo.bt_lib.msg.BluetoothAck;
-import com.edoardo.bt_lib.msg.BluetoothCommunicatorEvent;
-import com.edoardo.bt_lib.msg.BluetoothCommunicatorPair;
 import com.edoardo.bt_lib.event.BondedDevice;
 import com.edoardo.bt_lib.event.ClientConnectionFail;
+import com.edoardo.bt_lib.event.ClientConnectionQuitted;
 import com.edoardo.bt_lib.event.ClientConnectionSuccess;
 import com.edoardo.bt_lib.event.ServerConnectionFail;
 import com.edoardo.bt_lib.event.ServerConnectionSuccess;
+import com.edoardo.bt_lib.msg.BluetoothAck;
+import com.edoardo.bt_lib.msg.BluetoothCommunicatorEvent;
+import com.edoardo.bt_lib.msg.BluetoothCommunicatorPair;
 import com.edoardo.bt_lib.msg.BluetoothCommunicatorString;
 import com.edoardo.bt_lib.msg.BluetoothCommunicatorSubscriber;
 import com.edoardo.bt_lib.msg.BluetoothCommunicatorTemplate;
 import com.edoardo.bt_lib.msg.BluetoothCommunicatorTuple;
-import com.edoardo.bt_lib.event.ClientConnectionQuitted;
 
-import java.util.HashSet;
+import java.util.Set;
 
 import de.greenrobot.event.EventBus;
 
@@ -63,7 +63,7 @@ public abstract class BluetoothFragmentActivity extends FragmentActivity {
         if (requestCode == BluetoothManager.REQUEST_DISCOVERABLE_CODE) {
             if (resultCode == BluetoothManager.BLUETOOTH_REQUEST_REFUSED) {
                 Log.d(TAG, "onActivityResult: permessi rifiutati");
-            } else if (resultCode == BluetoothManager.BLUETOOTH_REQUEST_ACCEPTED) {
+            } else if (resultCode == BluetoothManager.bluetoothRequestAccepted) {
                 onBluetoothStartDiscovery();
             }
         }
@@ -82,10 +82,10 @@ public abstract class BluetoothFragmentActivity extends FragmentActivity {
     }
 
     public boolean isConnected(){
-        return mBluetoothManager.isConnected;
+        return mBluetoothManager.isConnected();
     }
     public BluetoothManager.TypeBluetooth getTypeBluetooth(){
-        return mBluetoothManager.mType;
+        return mBluetoothManager.getmType();
     }
     public String getDeviceMacAddress(){
         return mBluetoothManager.getDeviceMacAddress();
@@ -99,11 +99,11 @@ public abstract class BluetoothFragmentActivity extends FragmentActivity {
     }
 
     public void selectServerMode(){
-        setTimeDiscoverable(BluetoothManager.BLUETOOTH_TIME_DICOVERY_300_SEC);
+        setTimeDiscoverable(BluetoothManager.BLUETOOTH_TIME_DISCOVERY_300_SEC);
         mBluetoothManager.selectServerMode();
     }
     public void selectClientMode(){
-        setTimeDiscoverable(BluetoothManager.BLUETOOTH_TIME_DICOVERY_300_SEC);
+        setTimeDiscoverable(BluetoothManager.BLUETOOTH_TIME_DISCOVERY_300_SEC);
         mBluetoothManager.selectClientMode();
     }
 
@@ -133,7 +133,8 @@ public abstract class BluetoothFragmentActivity extends FragmentActivity {
     public void subscribe(final EventType eventType, final boolean subscribe){
         mBluetoothManager.subscribe(new BluetoothCommunicatorSubscriber(eventType, getDeviceMacAddress(), subscribe));
     }
-    public HashSet<EventType> getAllSubscriptions(){
+
+    public Set<EventType> getAllSubscriptions() {
         return mBluetoothManager.getAllSubscription();
     }
 
@@ -150,7 +151,6 @@ public abstract class BluetoothFragmentActivity extends FragmentActivity {
     }
     public void out(final String msgString, final Template t){
         if (isConnected()) {
-//            BluetoothCommunicatorString bcs = new BluetoothCommunicatorString(msgString);
             BluetoothCommunicatorTuple bct = new BluetoothCommunicatorTuple( (msgString), t, getDeviceMacAddress());
             mBluetoothManager.out(bct);
         }
@@ -179,15 +179,15 @@ public abstract class BluetoothFragmentActivity extends FragmentActivity {
 
     public void onEventMainThread(final ClientConnectionSuccess event){
         Log.i(TAG, "createClient:end: " +System.currentTimeMillis());
-        Log.i(TAG, "onEventMainThread: Client connection success");
+        Log.i(TAG, "onEventMainThread: CLIENT connection success");
         mBluetoothManager.onClientConnectionSuccess();
         onClientConnectionSuccess();
     }
 
     public void onEventMainThread(final ClientConnectionFail event){
-        if (getTypeBluetooth().equals(BluetoothManager.TypeBluetooth.Client)) {
-            Log.i(TAG, "onEventMainThread: Client connection fail");
-            mBluetoothManager.isConnected = false;
+        if (getTypeBluetooth().equals(BluetoothManager.TypeBluetooth.CLIENT)) {
+            Log.i(TAG, "onEventMainThread: CLIENT connection fail");
+            mBluetoothManager.setIsConnectedFalse();
             onClientConnectionFail(event.serverAddress);
             disconnect();
             Log.d(TAG, "onEventMainThread: tento di riconnettere il client al server - " + event.serverAddress);
@@ -196,8 +196,8 @@ public abstract class BluetoothFragmentActivity extends FragmentActivity {
     }
 
     public void onEventMainThread(final ServerConnectionSuccess event){
-        Log.i(TAG, "onEventMainThread: Server connection success");
-        mBluetoothManager.isConnected = true;
+        Log.i(TAG, "onEventMainThread: SERVER connection success");
+        mBluetoothManager.setIsConnectedTrue();
         mBluetoothManager.onServerConnectionSuccess(event.getClientAddress());
         onServerConnectionSuccess();
         if (mBluetoothManager.isMsgForClient(event.getClientAddress())) {
@@ -205,7 +205,6 @@ public abstract class BluetoothFragmentActivity extends FragmentActivity {
             while (isConnected() && mBluetoothManager.isMsgForClient(event.getClientAddress())) {
                 String msg = mBluetoothManager.getMsgToDispatch(event.getClientAddress());
                 mBluetoothManager.sendMessageToTarget(new BluetoothCommunicatorPair(event.getClientAddress(), msg));
-//                mBluetoothManager.saveMsgDispatcher();
             }
         }
     }
@@ -213,12 +212,12 @@ public abstract class BluetoothFragmentActivity extends FragmentActivity {
     public void onEventMainThread(final ServerConnectionFail event) {
     disconnect();
         onServerConnectionFail(event.getClientAddress());
-        Log.i(TAG, "onEventMainThread: Server connection quitted");
+        Log.i(TAG, "onEventMainThread: SERVER connection quitted");
 
     }
 
     public void onEventMainThread(final BluetoothCommunicatorPair msgPair){
-        if (getTypeBluetooth().equals(BluetoothManager.TypeBluetooth.Server)) {
+        if (getTypeBluetooth().equals(BluetoothManager.TypeBluetooth.SERVER)) {
             if (msgPair.getTargetAddress().equals(mBluetoothManager.getDeviceMacAddress())) {
                 // significa che il messaggio è per il server e non devo fare altro
                 AppDatabase.getInMemoryDatabase(this).daoMsg().insertMsg(new Msg(msgPair.getMsgObj().getContent()));
@@ -239,7 +238,7 @@ public abstract class BluetoothFragmentActivity extends FragmentActivity {
     }
 
     public void onEventMainThread(final BondedDevice event){
-        if (getTypeBluetooth().equals(BluetoothManager.TypeBluetooth.Client)) {
+        if (getTypeBluetooth().equals(BluetoothManager.TypeBluetooth.CLIENT)) {
             onClientConnectionSuccess();
         } else {
             onServerConnectionSuccess();
@@ -257,7 +256,7 @@ public abstract class BluetoothFragmentActivity extends FragmentActivity {
     }
 
     public void onEventMainThread(final BluetoothCommunicatorSubscriber btCommSub) {
-        if (getTypeBluetooth().equals(BluetoothManager.TypeBluetooth.Server)) {
+        if (getTypeBluetooth().equals(BluetoothManager.TypeBluetooth.SERVER)) {
             if (btCommSub.isSubscribe()) {
                 mBluetoothManager.onAddSubscription(btCommSub.getEventType(), btCommSub.getAddress());
             } else {
@@ -268,7 +267,7 @@ public abstract class BluetoothFragmentActivity extends FragmentActivity {
     }
 
     public void onEventMainThread(final BluetoothCommunicatorEvent btCommEv) {
-        if (getTypeBluetooth().equals(BluetoothManager.TypeBluetooth.Server)){
+        if (getTypeBluetooth().equals(BluetoothManager.TypeBluetooth.SERVER)) {
             mBluetoothManager.onPublish(btCommEv);
             if(mBluetoothManager.getAllSubscription().contains(btCommEv.getEventType())){
                 onBluetoothMsgObjectReceived((btCommEv.getMsgObj().getContent().concat(" - ").concat(btCommEv.getEventType().name())));
@@ -279,7 +278,7 @@ public abstract class BluetoothFragmentActivity extends FragmentActivity {
     }
 
     public void onEventMainThread(final BluetoothCommunicatorTemplate btCommTem){
-        if (getTypeBluetooth().equals(BluetoothManager.TypeBluetooth.Server)){
+        if (getTypeBluetooth().equals(BluetoothManager.TypeBluetooth.SERVER)) {
             Log.d(TAG, "onEventMainThread: addressTuple " +btCommTem.getAddress().concat("-")+(btCommTem.isToDelete()));
             BluetoothCommunicatorTuple btCommTuple = mBluetoothManager.onTemplateRequest(btCommTem);
             if (btCommTuple != null) {
@@ -293,33 +292,40 @@ public abstract class BluetoothFragmentActivity extends FragmentActivity {
     }
 
     public void onEventMainThread(final BluetoothCommunicatorTuple btCommTup){
-        if (getTypeBluetooth().equals(BluetoothManager.TypeBluetooth.Server)) {
+        if (getTypeBluetooth().equals(BluetoothManager.TypeBluetooth.SERVER)) {
             if (mBluetoothManager.isTemplateReadRequestWaiting(btCommTup.getTemplate())) {
-                    Log.d(TAG, "onEventMainThread: mando il msg a tutte le READ pendenti");
-                    for (BluetoothCommunicatorTemplate b: mBluetoothManager.getAllReadTemplateRequest(btCommTup.getTemplate())) {
-                        if (b.getAddress().equals(mBluetoothManager.getDeviceMacAddress())) {
-                            onTupleReceived(btCommTup.getMsgObj().getContent());
-                        } else {
-                            mBluetoothManager.onOut(btCommTup, b.getAddress());
-                        }
-                    }
-                }
-
-                if (mBluetoothManager.isTemplateInRequestWaiting(btCommTup.getTemplate())) {
-                    Log.d(TAG, "onEventMainThread: c'è almeno una IN pendente");
-                    BluetoothCommunicatorTemplate btCommTem = mBluetoothManager.getNextTemplateInRequest(btCommTup.getTemplate());
-                    if (btCommTem != null) {
-                        if (btCommTem.getAddress().equals(mBluetoothManager.getDeviceMacAddress())) {
-                            onTupleReceived(btCommTup.getMsgObj().getContent());
-                        } else {
-                            mBluetoothManager.onOut(btCommTup, btCommTem.getAddress());
-                        }
-                    }
-                    return;
-                }
+                manageReadRequest(btCommTup);
+            }
+            if (mBluetoothManager.isTemplateInRequestWaiting(btCommTup.getTemplate())) {
+                manageInRequest(btCommTup);
+                return;
+            }
             mBluetoothManager.addTuple(btCommTup);
-        } else if (getTypeBluetooth().equals(BluetoothManager.TypeBluetooth.Client)){
+        } else if (getTypeBluetooth().equals(BluetoothManager.TypeBluetooth.CLIENT)) {
             onTupleReceived(btCommTup.getMsgObj().getContent());
+        }
+    }
+
+    private void manageInRequest(BluetoothCommunicatorTuple btCommTup) {
+        Log.d(TAG, "onEventMainThread: c'è almeno una IN pendente");
+        BluetoothCommunicatorTemplate btCommTem = mBluetoothManager.getNextTemplateInRequest(btCommTup.getTemplate());
+        if (btCommTem != null) {
+            if (btCommTem.getAddress().equals(mBluetoothManager.getDeviceMacAddress())) {
+                onTupleReceived(btCommTup.getMsgObj().getContent());
+            } else {
+                mBluetoothManager.onOut(btCommTup, btCommTem.getAddress());
+            }
+        }
+    }
+
+    private void manageReadRequest(BluetoothCommunicatorTuple btCommTup) {
+        Log.d(TAG, "onEventMainThread: mando il msg a tutte le READ pendenti");
+        for (BluetoothCommunicatorTemplate b : mBluetoothManager.getAllReadTemplateRequest(btCommTup.getTemplate())) {
+            if (b.getAddress().equals(mBluetoothManager.getDeviceMacAddress())) {
+                onTupleReceived(btCommTup.getMsgObj().getContent());
+            } else {
+                mBluetoothManager.onOut(btCommTup, b.getAddress());
+            }
         }
     }
 
