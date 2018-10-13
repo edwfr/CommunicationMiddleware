@@ -14,11 +14,12 @@ import android.util.Log;
 import com.edoardo.bt_lib.activity.BluetoothFragmentActivity;
 import com.edoardo.bt_lib.database.AppDatabase;
 import com.edoardo.bt_lib.database.model.Msg;
+import com.edoardo.bt_lib.database.model.MsgDispatcher;
 import com.edoardo.bt_lib.database.model.Request;
 import com.edoardo.bt_lib.database.model.RoutingTable;
-import com.edoardo.bt_lib.database.model.MsgDispatcher;
 import com.edoardo.bt_lib.database.model.Subscription;
 import com.edoardo.bt_lib.database.model.TupleSpace;
+import com.edoardo.bt_lib.enums.EventType;
 import com.edoardo.bt_lib.enums.Template;
 import com.edoardo.bt_lib.event.BondedDevice;
 import com.edoardo.bt_lib.msg.BluetoothAck;
@@ -26,7 +27,6 @@ import com.edoardo.bt_lib.msg.BluetoothCommunicatorEvent;
 import com.edoardo.bt_lib.msg.BluetoothCommunicatorPair;
 import com.edoardo.bt_lib.msg.BluetoothCommunicatorString;
 import com.edoardo.bt_lib.msg.BluetoothCommunicatorSubscriber;
-import com.edoardo.bt_lib.enums.EventType;
 import com.edoardo.bt_lib.msg.BluetoothCommunicatorTemplate;
 import com.edoardo.bt_lib.msg.BluetoothCommunicatorTuple;
 import com.edoardo.bt_lib.msg.InvalidCallException;
@@ -40,6 +40,7 @@ import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.Callable;
@@ -47,23 +48,86 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
-import java.util.prefs.AbstractPreferences;
 
 import de.greenrobot.event.EventBus;
 
-import static android.bluetooth.BluetoothAdapter.EXTRA_PREVIOUS_SCAN_MODE;
 import static android.bluetooth.BluetoothAdapter.EXTRA_SCAN_MODE;
 import static android.bluetooth.BluetoothAdapter.SCAN_MODE_CONNECTABLE;
-import static android.bluetooth.BluetoothAdapter.SCAN_MODE_CONNECTABLE_DISCOVERABLE;
-import static android.bluetooth.BluetoothAdapter.SCAN_MODE_NONE;
 
 
 public class BluetoothManager extends BroadcastReceiver {
+
+    public static final int REQUEST_DISCOVERABLE_CODE = 114;
+    //    private int bluetoothRequestAccepted;
+    public static final int BLUETOOTH_REQUEST_REFUSED = 0;
+    public static final int BLUETOOTH_TIME_DICOVERY_60_SEC = 15;
+    public static final int BLUETOOTH_TIME_DICOVERY_120_SEC = 120;
+    public static final int BLUETOOTH_TIME_DISCOVERY_300_SEC = 300;
+    private static final String TAG = BluetoothManager.class.getSimpleName();
+    private int bluetoothNbrClientMax = 7;
+    private BluetoothFragmentActivity mActivity;
+    private BluetoothAdapter mBluetoothAdapter;
+    private BluetoothClient mBluetoothClient;
+    private ArrayList<String> mAdressListServerWaitingConnection;
+    private HashMap<String, BluetoothServer> mServerWaitingConnectionList;
+    private ArrayList<BluetoothServer> mServerConnectedList;
+    private HashMap<String, Thread> mServerThreadList;
+    private SerialExecutor mSerialExecutor;
+    private int mNbrClientConnection;
+    private int mTimeDiscoverable;
+    private boolean isConnected;
+    private TypeBluetooth mType;
+    private String mUuidAppIdentifier;
+    private Thread mThreadClient;
+    private BlockingQueue<Msg> msgQueue;
+
+    public BluetoothManager(BluetoothFragmentActivity activity, String uuidAppIdentifier) {
+        mActivity = activity;
+        mBluetoothAdapter = BluetoothAdapter.getDefaultAdapter();
+        isConnected = false;
+        mNbrClientConnection = 0;
+        mAdressListServerWaitingConnection = new ArrayList<>();
+        mServerWaitingConnectionList = new HashMap<>();
+        mServerConnectedList = new ArrayList<>();
+        mServerThreadList = new HashMap<>();
+        mSerialExecutor = new SerialExecutor(Executors.newSingleThreadExecutor());
+        mUuidAppIdentifier = uuidAppIdentifier;
+
+        IntentFilter intentFilter = new IntentFilter(BluetoothDevice.ACTION_FOUND);
+        mActivity.registerReceiver(this, intentFilter);
+
+        IntentFilter intentFilter2 = new IntentFilter(BluetoothAdapter.ACTION_DISCOVERY_FINISHED);
+        mActivity.registerReceiver(this, intentFilter2);
+
+        IntentFilter intentFilter1 = new IntentFilter(BluetoothAdapter.ACTION_SCAN_MODE_CHANGED);
+        mActivity.registerReceiver(this, intentFilter1);
+
+        if (SharedPreferencesManager.containsType(this.mActivity)) {
+            Log.d(TAG, "onCreate: shared preference presente");
+            mType = loadTypeSetting();
+
+            if (mType.equals(BluetoothManager.TypeBluetooth.CLIENT)) {
+                String tempServerAddress = this.loadClientAddressSetting();
+                setTimeDiscoverable(BluetoothManager.BLUETOOTH_TIME_DISCOVERY_300_SEC);
+                if (tempServerAddress != null) {
+                    this.reconnectToLastServer(tempServerAddress);
+                }
+            } else if (mType.equals(BluetoothManager.TypeBluetooth.SERVER)) {
+                setTimeDiscoverable(BluetoothManager.BLUETOOTH_TIME_DISCOVERY_300_SEC);
+                scanAllBluetoothDevice();
+            }
+        }
+
+        msgQueue = new ArrayBlockingQueue<>(100);
+        msgQueue.addAll(AppDatabase.getInMemoryDatabase(mActivity).daoMsg().findAllMsg());
+    }
 
     /* START DB METHOD */
     public void addMsg(final Msg msg) {
         msgQueue.add(msg);
     }
+
+    /* END DB METHOD */
 
     public void getMsg(){
         new receiveRequestTask().execute();
@@ -83,27 +147,6 @@ public class BluetoothManager extends BroadcastReceiver {
         return result.get();
     }
 
-    @SuppressLint("StaticFieldLeak")
-    private class receiveRequestTask extends AsyncTask<Void, Void, String> {
-
-        @Override
-        protected String doInBackground(Void... params) {
-            try {
-                return getCallableMsg();
-            }catch (InterruptedException | ExecutionException e) {
-                e.printStackTrace();
-            }
-            return null;
-        }
-
-        @Override
-        protected void onPostExecute(String s) {
-            super.onPostExecute(s);
-            Log.w(TAG, "onPostExecute: ends " +System.currentTimeMillis());
-            mActivity.onReceiveRequest(s);
-        }
-    }
-
     public void insertMailboxMsg(BluetoothCommunicatorString bcs) {
         Long id = AppDatabase.getInMemoryDatabase(mActivity).daoMsg().insertMsg(new Msg(bcs.getContent()));
         Msg msg = new Msg(bcs.getContent(), id.intValue());
@@ -111,7 +154,7 @@ public class BluetoothManager extends BroadcastReceiver {
     }
 
     public boolean isMsgForClient(final String clientAddress) {
-        MsgDispatcher m = AppDatabase.getInMemoryDatabase(mActivity).daoMsgDispatcher().getMsgForClient(clientAddress);;
+        MsgDispatcher m = AppDatabase.getInMemoryDatabase(mActivity).daoMsgDispatcher().getMsgForClient(clientAddress);
         return m != null;
     }
 
@@ -133,9 +176,8 @@ public class BluetoothManager extends BroadcastReceiver {
 
     public void addSubscription(final EventType e){
         if (AppDatabase.getInMemoryDatabase(mActivity).daoSubscription().isSubForClient(e.ordinal(), getDeviceMacAddress()) == null) {
-//            Log.d(TAG, "addSubscription: " +new Gson().toJson(AppDatabase.getInMemoryDatabase(mActivity).daoSubscription().isSubForClient(e.ordinal(), getDeviceMacAddress())));
             AppDatabase.getInMemoryDatabase(mActivity).daoSubscription().insertSubscription(new Subscription(e.ordinal(),getDeviceMacAddress()));
-//            Log.d(TAG, "addSubscription: " +new Gson().toJson(AppDatabase.getInMemoryDatabase(mActivity).daoSubscription().isSubForClient(e.ordinal(), getDeviceMacAddress())));
+            Log.d(TAG, "addSubscription: " + new Gson().toJson(AppDatabase.getInMemoryDatabase(mActivity).daoSubscription().isSubForClient(e.ordinal(), getDeviceMacAddress())));
             Log.d(TAG, "addSubscription: insert " +System.currentTimeMillis());
         } else {
             Log.d(TAG, "addSubscription: already in db");
@@ -144,19 +186,18 @@ public class BluetoothManager extends BroadcastReceiver {
 
     public void removeSubscription(final EventType e){
         if (AppDatabase.getInMemoryDatabase(mActivity).daoSubscription().isSubForClient(e.ordinal(), getDeviceMacAddress()) != null) {
-//            Log.d(TAG, "removeSubscription: " +new Gson().toJson(AppDatabase.getInMemoryDatabase(mActivity).daoSubscription().isSubForClient(e.ordinal(), getDeviceMacAddress())));
             Subscription s = AppDatabase.getInMemoryDatabase(mActivity).daoSubscription().isSubForClient(e.ordinal(), getDeviceMacAddress());
             AppDatabase.getInMemoryDatabase(mActivity).daoSubscription().deleteSub(s.getUid());
-//            Log.d(TAG, "removeSubscription: " +new Gson().toJson(AppDatabase.getInMemoryDatabase(mActivity).daoSubscription().isSubForClient(e.ordinal(), getDeviceMacAddress())));
-//            Log.d(TAG, "removeSubscription: done");
+            Log.d(TAG, "removeSubscription: " + new Gson().toJson(AppDatabase.getInMemoryDatabase(mActivity).daoSubscription().isSubForClient(e.ordinal(), getDeviceMacAddress())));
+            Log.d(TAG, "removeSubscription: done");
         } else {
             Log.d(TAG, "removeSubscription: not in db");
         }
     }
 
-    public HashSet<EventType> getAllSubscription() {
+    public Set<EventType> getAllSubscription() {
         List<Subscription> l =  AppDatabase.getInMemoryDatabase(mActivity).daoSubscription().getAllSubForClient(getDeviceMacAddress());
-        HashSet<EventType> eventSet = new HashSet<>();
+        Set<EventType> eventSet = new HashSet<>();
         for (Subscription s: l) {
             eventSet.add(EventType.values()[s.getEventTypeId()]);
         }
@@ -165,15 +206,11 @@ public class BluetoothManager extends BroadcastReceiver {
 
     public void addRoute(final EventType e, final String macSubscribers){
         if (AppDatabase.getInMemoryDatabase(mActivity).daoRoutingTable().isEventForReceiver(e.ordinal(), macSubscribers) == null) {
-//            Log.d(TAG, "addRoute: " + new Gson().toJson(AppDatabase.getInMemoryDatabase(mActivity).daoRoutingTable().isEventForReceiver(e.ordinal(), macSubscribers)));
             AppDatabase.getInMemoryDatabase(mActivity).daoRoutingTable().insertRoute(new RoutingTable(e.ordinal(), macSubscribers));
-//            Log.d(TAG, "addRoute: " + new Gson().toJson(AppDatabase.getInMemoryDatabase(mActivity).daoRoutingTable().isEventForReceiver(e.ordinal(), macSubscribers)));
-//            Log.d(TAG, "addRoute: done");
+            Log.d(TAG, "addRoute: " + new Gson().toJson(AppDatabase.getInMemoryDatabase(mActivity).daoRoutingTable().isEventForReceiver(e.ordinal(), macSubscribers)));
             Log.e(TAG, "addRoute: " +System.currentTimeMillis());
-            Runnable runnable = new Runnable() {
-                @Override
-                public void run() {
-                    if (mType.equals(TypeBluetooth.Server)) {
+            Runnable runnable = () -> {
+                if (mType.equals(TypeBluetooth.SERVER)) {
                         if (mServerConnectedList != null) {
                             for (BluetoothServer bluetoothServer : mServerConnectedList) {
                                 if (bluetoothServer.getClientAddress().equals(macSubscribers)) {
@@ -182,7 +219,6 @@ public class BluetoothManager extends BroadcastReceiver {
                             }
                         }
                     }
-                }
             };
             mSerialExecutor.execute(runnable);
         } else {
@@ -192,19 +228,18 @@ public class BluetoothManager extends BroadcastReceiver {
 
     public void removeRoute(final EventType e, final String macSubscribers){
         if (AppDatabase.getInMemoryDatabase(mActivity).daoRoutingTable().isEventForReceiver(e.ordinal(), macSubscribers) != null) {
-//            Log.d(TAG, "removeRoute: " + new Gson().toJson(AppDatabase.getInMemoryDatabase(mActivity).daoRoutingTable().isEventForReceiver(e.ordinal(), macSubscribers)));
             RoutingTable r = AppDatabase.getInMemoryDatabase(mActivity).daoRoutingTable().isEventForReceiver(e.ordinal(), macSubscribers);
             AppDatabase.getInMemoryDatabase(mActivity).daoRoutingTable().deleteRouteById(r.getUid());
-//            Log.d(TAG, "removeRoute: " + new Gson().toJson(AppDatabase.getInMemoryDatabase(mActivity).daoRoutingTable().isEventForReceiver(e.ordinal(), macSubscribers)));
-//            Log.d(TAG, "removeRoute: done");
+            Log.d(TAG, "removeRoute: " + new Gson().toJson(AppDatabase.getInMemoryDatabase(mActivity).daoRoutingTable().isEventForReceiver(e.ordinal(), macSubscribers)));
+            Log.d(TAG, "removeRoute: done");
         } else {
             Log.d(TAG, "removeRoute: not in db");
         }
     }
 
-    public HashSet<String> getAllRoute(final EventType eventType) {
+    public Set<String> getAllRoute(final EventType eventType) {
         List<RoutingTable> l = AppDatabase.getInMemoryDatabase(mActivity).daoRoutingTable().getAllReceivers(eventType.ordinal());
-        HashSet<String> eventSet = new HashSet<>();
+        Set<String> eventSet = new HashSet<>();
         for (RoutingTable s: l) {
             eventSet.add(s.getMac());
         }
@@ -213,19 +248,14 @@ public class BluetoothManager extends BroadcastReceiver {
 
     public void addTuple(BluetoothCommunicatorTuple btCommTup) {
         AppDatabase.getInMemoryDatabase(mActivity).daoTupleSpace().insertTuple(new TupleSpace(btCommTup.getTemplate().ordinal(), btCommTup.getSenderAddress(), btCommTup.getMsgObj().getContent()));
-//        Log.d(TAG, "addTuple: " +System.currentTimeMillis());
-        Runnable runnable = new Runnable() {
-            @Override
-            public void run() {
-                if (mType.equals(TypeBluetooth.Server)) {
-                    if (mServerConnectedList != null) {
+        Log.d(TAG, "addTuple: " + System.currentTimeMillis());
+        Runnable runnable = () -> {
+            if (mType.equals(TypeBluetooth.SERVER) && mServerConnectedList != null) {
                         for (BluetoothServer bluetoothServer : mServerConnectedList) {
                             if (bluetoothServer.getClientAddress().equals(btCommTup.getSenderAddress())) {
                                 bluetoothServer.writeJSON(new BluetoothAck());
                             }
                         }
-                    }
-                }
             }
         };
         mSerialExecutor.execute(runnable);
@@ -290,8 +320,8 @@ public class BluetoothManager extends BroadcastReceiver {
         Log.d(TAG, "addTemplateToWaitingQueue: " +new Gson().toJson(AppDatabase.getInMemoryDatabase(mActivity).daoRequest().getAllRequest(btCommTem.getTemplate().ordinal())));
     }
 
-    public ArrayList<BluetoothCommunicatorTemplate> getAllReadTemplateRequest(final Template template) {
-        ArrayList<BluetoothCommunicatorTemplate> tempList = new ArrayList<>();
+    public List<BluetoothCommunicatorTemplate> getAllReadTemplateRequest(final Template template) {
+        List<BluetoothCommunicatorTemplate> tempList = new ArrayList<>();
         HashSet<String> macSet = new HashSet<>();
         Log.d(TAG, "getAllReadTemplateRequest: dentro");
         Log.d(TAG, "getAllReadTemplateRequest: " +new Gson().toJson(AppDatabase.getInMemoryDatabase(mActivity).daoRequest().getAllReadRequest(template.ordinal())));
@@ -320,7 +350,7 @@ public class BluetoothManager extends BroadcastReceiver {
     }
 
     public boolean isTemplateReadRequestWaiting(final Template template) {
-//        Log.d(TAG, "isTemplateReadRequestWaiting: " +new Gson().toJson(AppDatabase.getInMemoryDatabase(mActivity).daoRequest().getAllReadRequest(template.ordinal())));
+        Log.d(TAG, "isTemplateReadRequestWaiting: " + new Gson().toJson(AppDatabase.getInMemoryDatabase(mActivity).daoRequest().getAllReadRequest(template.ordinal())));
         return  (!AppDatabase.getInMemoryDatabase(mActivity).daoRequest().getAllReadRequest(template.ordinal()).isEmpty());
     }
 
@@ -328,100 +358,18 @@ public class BluetoothManager extends BroadcastReceiver {
         return  (AppDatabase.getInMemoryDatabase(mActivity).daoRequest().getInRequest(template.ordinal()) != null);
     }
 
-    /* END DB METHOD */
-
-    private static final String TAG = BluetoothManager.class.getSimpleName();
-
-    public enum TypeBluetooth {
-        Client,
-        Server,
-        None;
-    }
-
-    public static final int REQUEST_DISCOVERABLE_CODE = 114;
-
-    public static int BLUETOOTH_REQUEST_ACCEPTED;
-    public static final int BLUETOOTH_REQUEST_REFUSED = 0; // NE PAS MODIFIER LA VALEUR
-
-    public static final int BLUETOOTH_TIME_DICOVERY_60_SEC = 15;
-    public static final int BLUETOOTH_TIME_DICOVERY_120_SEC = 120;
-    public static final int BLUETOOTH_TIME_DICOVERY_300_SEC = 300;
-
-    private static int BLUETOOTH_NBR_CLIENT_MAX = 7;
-
-    private BluetoothFragmentActivity mActivity;
-    private BluetoothAdapter mBluetoothAdapter;
-    private BluetoothClient mBluetoothClient;
-
-    private ArrayList<String> mAdressListServerWaitingConnection;
-    private HashMap<String, BluetoothServer> mServerWaitingConnectionList;
-    private ArrayList<BluetoothServer> mServerConnectedList;
-    private HashMap<String, Thread> mServerThreadList;
-    private SerialExecutor mSerialExecutor;
-    private int mNbrClientConnection;
-    private int mTimeDiscoverable;
-    public boolean isConnected;
-    public TypeBluetooth mType;
-    private String mUuidAppIdentifier;
-    private Thread mThreadClient;
-
-    private BlockingQueue<Msg> msgQueue;
-
-
-
-    public BluetoothManager(BluetoothFragmentActivity activity, String uuidAppIdentifier) {
-        mActivity = activity;
-        mBluetoothAdapter = BluetoothAdapter.getDefaultAdapter();
-        isConnected = false;
-        mNbrClientConnection = 0;
-        mAdressListServerWaitingConnection = new ArrayList<>();
-        mServerWaitingConnectionList = new HashMap<>();
-        mServerConnectedList = new ArrayList<>();
-        mServerThreadList = new HashMap<>();
-        mSerialExecutor = new SerialExecutor(Executors.newSingleThreadExecutor());
-        mUuidAppIdentifier = uuidAppIdentifier;
-
-        IntentFilter intentFilter = new IntentFilter(BluetoothDevice.ACTION_FOUND);
-        mActivity.registerReceiver(this, intentFilter);
-
-        IntentFilter intentFilter2 = new IntentFilter(BluetoothAdapter.ACTION_DISCOVERY_FINISHED);
-        mActivity.registerReceiver(this, intentFilter2);
-
-        IntentFilter intentFilter1 = new IntentFilter(BluetoothAdapter.ACTION_SCAN_MODE_CHANGED);
-        mActivity.registerReceiver(this, intentFilter1);
-
-        if (SharedPreferencesManager.containsType(this.mActivity)) {
-            Log.d(TAG, "onCreate: shared preference presente");
-            mType = loadTypeSetting();
-
-            if (mType.equals(BluetoothManager.TypeBluetooth.Client)) {
-                String tempServerAddress = this.loadClientAddressSetting();
-                setTimeDiscoverable(BluetoothManager.BLUETOOTH_TIME_DICOVERY_300_SEC);
-                if (tempServerAddress != null) {
-                    this.reconnectToLastServer(tempServerAddress);
-                }
-            } else if (mType.equals(BluetoothManager.TypeBluetooth.Server)) {
-                setTimeDiscoverable(BluetoothManager.BLUETOOTH_TIME_DICOVERY_300_SEC);
-                scanAllBluetoothDevice();
-            }
-        }
-
-        msgQueue = new ArrayBlockingQueue<>(100);
-        msgQueue.addAll(AppDatabase.getInMemoryDatabase(mActivity).daoMsg().findAllMsg());
-    }
-
-    /* START SHARED PREFERENCES METHODS */
-
     private void saveBtType(){
         SharedPreferencesManager.setBtType(this.mActivity, getTypeBluetooth());
         Log.d(TAG, "saveBtType: done");
     }
 
     private void saveServerAddress(){
-        if (getTypeBluetooth().equals(TypeBluetooth.Client)) {
+        if (getTypeBluetooth().equals(TypeBluetooth.CLIENT)) {
             SharedPreferencesManager.setServerAddress(this.mActivity, mBluetoothClient.getServerAddress());
         }
     }
+
+    /* START SHARED PREFERENCES METHODS */
 
     private TypeBluetooth loadTypeSetting() {
         TypeBluetooth oldType = BluetoothManager.TypeBluetooth.valueOf(SharedPreferencesManager.getBtTypeValue(this.mActivity));
@@ -433,7 +381,7 @@ public class BluetoothManager extends BroadcastReceiver {
     @Nullable
     private String loadClientAddressSetting() {
         TypeBluetooth oldType = loadTypeSetting();
-        if (oldType.equals(BluetoothManager.TypeBluetooth.Client)) {
+        if (oldType.equals(BluetoothManager.TypeBluetooth.CLIENT)) {
             String oldServerAddress = SharedPreferencesManager.getServerAddressValue(this.mActivity);
             Log.d(TAG, "loadSetting: done");
             Log.d(TAG, "loadSetting: server address - " +oldServerAddress);
@@ -442,19 +390,18 @@ public class BluetoothManager extends BroadcastReceiver {
         return null;
     }
 
-
-    /* END SHARED PREFERENCES METHODS */
-
     public void selectServerMode() {
-        mType = TypeBluetooth.Server;
+        mType = TypeBluetooth.SERVER;
     }
 
     public void selectClientMode() {
-        mType = TypeBluetooth.Client;
+        mType = TypeBluetooth.CLIENT;
     }
 
+    /* END SHARED PREFERENCES METHODS */
+
     private void resetMode() {
-        mType = TypeBluetooth.None;
+        mType = TypeBluetooth.NONE;
     }
 
     public String getDeviceMacAddress() {
@@ -467,16 +414,16 @@ public class BluetoothManager extends BroadcastReceiver {
         return null;
     }
 
-    public void setNbrClientMax(int nbrClientMax) {
-            BLUETOOTH_NBR_CLIENT_MAX = nbrClientMax;
-    }
-
     public int getNbrClientConnected() {
         return this.mNbrClientConnection;
     }
 
     public int getNbrClientMax() {
-        return BLUETOOTH_NBR_CLIENT_MAX;
+        return bluetoothNbrClientMax;
+    }
+
+    public void setNbrClientMax(int nbrClientMax) {
+        bluetoothNbrClientMax = nbrClientMax;
     }
 
     public boolean isNbrMaxReached() {
@@ -496,7 +443,7 @@ public class BluetoothManager extends BroadcastReceiver {
     }
 
     private void decrementNbrConnection() {
-        if (getTypeBluetooth().equals(TypeBluetooth.Server)) {
+        if (getTypeBluetooth().equals(TypeBluetooth.SERVER)) {
             if (mNbrClientConnection == 0) {
                 return;
             }
@@ -511,7 +458,7 @@ public class BluetoothManager extends BroadcastReceiver {
 
     public void setTimeDiscoverable(int timeInSec) {
         mTimeDiscoverable = timeInSec;
-        BLUETOOTH_REQUEST_ACCEPTED = mTimeDiscoverable;
+//        bluetoothRequestAccepted = mTimeDiscoverable;
     }
 
     public boolean isBluetoothAvailable() {
@@ -554,7 +501,6 @@ public class BluetoothManager extends BroadcastReceiver {
         if (isBluetoothAvailable()) {
             if (mBluetoothAdapter.isEnabled() && isDiscovering()) {
                 Log.e(TAG, "Bluetooth is already discovering");
-                return;
             } else {
                 boolean b = mBluetoothAdapter.startDiscovery();
                 Log.d(TAG, "startDiscovery: bluetooth is discovering ? " +b);
@@ -588,7 +534,7 @@ public class BluetoothManager extends BroadcastReceiver {
     }
 
     public void createClient(String addressMac) {
-        if (getTypeBluetooth().equals(TypeBluetooth.Client)) {
+        if (getTypeBluetooth().equals(TypeBluetooth.CLIENT)) {
             IntentFilter bondStateIntent = new IntentFilter(BluetoothDevice.ACTION_BOND_STATE_CHANGED);
             mActivity.registerReceiver(this, bondStateIntent);
             mBluetoothClient = new BluetoothClient(mBluetoothAdapter, mUuidAppIdentifier, addressMac, mActivity);
@@ -600,14 +546,14 @@ public class BluetoothManager extends BroadcastReceiver {
     }
 
     public void onClientConnectionSuccess(){
-        if (getTypeBluetooth().equals(TypeBluetooth.Client)) {
+        if (getTypeBluetooth().equals(TypeBluetooth.CLIENT)) {
             isConnected = true;
             cancelDiscovery();
         }
     }
 
     public void createServer(String address) {
-        if (getTypeBluetooth().equals(TypeBluetooth.Server) && !mAdressListServerWaitingConnection.contains(address)) {
+        if (getTypeBluetooth().equals(TypeBluetooth.SERVER) && !mAdressListServerWaitingConnection.contains(address)) {
             BluetoothServer mBluetoothServer = new BluetoothServer(mBluetoothAdapter, mUuidAppIdentifier, address, mActivity);
             Thread threadServer = new Thread(mBluetoothServer);
             threadServer.start();
@@ -664,13 +610,9 @@ public class BluetoothManager extends BroadcastReceiver {
         return false;
     }
 
-    /* START send receive pattern */
-
     public synchronized void sendMessageForAll(final String message) {
         Log.e(TAG, "===> sendMessageForAll");
-        Runnable runnable = new Runnable() {
-            @Override
-            public void run() {
+        Runnable runnable = () -> {
                 if (mType != null && isConnected) {
                     BluetoothCommunicatorString bcs = new BluetoothCommunicatorString(message);
                     if (mServerConnectedList != null) {
@@ -682,17 +624,14 @@ public class BluetoothManager extends BroadcastReceiver {
                         mBluetoothClient.writeJSON(bcs);
                     }
                 }
-            }
         };
         mSerialExecutor.execute(runnable);
     }
 
     public synchronized void sendMessageToTarget(final BluetoothCommunicatorPair message) {
-//        Log.e(TAG, "===> sendMessage to target: " +message.getTargetAddress());
+        Log.e(TAG, "===> sendMessage to target: " + message.getTargetAddress());
         Log.e(TAG, "sendMessageToTarget: time: " +System.currentTimeMillis());
-        Thread runnable = new Thread() {
-            @Override
-            public void run() {
+        Runnable runnable = () -> {
                 if (mType != null && isConnected) {
                     if (mServerConnectedList != null) {
                         for (BluetoothServer bluetoothServer : mServerConnectedList) {
@@ -705,13 +644,14 @@ public class BluetoothManager extends BroadcastReceiver {
                         mBluetoothClient.writeJSON(message);
                     }
                 }
-            }
         };
         mSerialExecutor.execute(runnable);
     }
 
+    /* START send receive pattern */
+
     public boolean isClientConnected(final String clientAddress) {
-        if (getTypeBluetooth().equals(TypeBluetooth.Server) && isConnected) {
+        if (getTypeBluetooth().equals(TypeBluetooth.SERVER) && isConnected) {
             for (BluetoothServer bluetoothServer : mServerConnectedList) {
                 if (bluetoothServer.getClientAddress().equals(clientAddress)) {
                     return true;
@@ -721,25 +661,24 @@ public class BluetoothManager extends BroadcastReceiver {
         return false;
     }
 
-    /* END send receive pattern */
-
-    /* START publish/subscribe */
-
     public synchronized void onAddSubscription(final EventType eventType, final String registerAddress) {
-        if (getTypeBluetooth().equals(TypeBluetooth.Server)) {
+        if (getTypeBluetooth().equals(TypeBluetooth.SERVER)) {
             addRoute(eventType, registerAddress);
         }
     }
 
     public synchronized void onRemoveSubscription(final EventType eventType, final String removeAddress) {
-        if (getTypeBluetooth().equals(TypeBluetooth.Server)) {
+        if (getTypeBluetooth().equals(TypeBluetooth.SERVER)) {
             removeRoute(eventType, removeAddress);
         }
     }
 
-    public synchronized HashSet<String> getAllSubscribers(final EventType eventType) throws InvalidCallException {
-        if (getTypeBluetooth().equals(TypeBluetooth.Server)) {
-//            return mRoutingTable.getAllSubscribers(eventType);
+    /* END send receive pattern */
+
+    /* START publish/subscribe */
+
+    public synchronized Set<String> getAllSubscribers(final EventType eventType) throws InvalidCallException {
+        if (getTypeBluetooth().equals(TypeBluetooth.SERVER)) {
             return getAllRoute(eventType);
         }
         throw new InvalidCallException();
@@ -761,11 +700,8 @@ public class BluetoothManager extends BroadcastReceiver {
     public synchronized void onPublish(final BluetoothCommunicatorEvent btCommEv) {
         Log.e(TAG, "===> onPublish" + System.currentTimeMillis());
 
-        Thread runnable = new Thread() {
-            @Override
-            public void run() {
-                if (getTypeBluetooth().equals(TypeBluetooth.Server)){
-                    if (mServerConnectedList != null) {
+        Runnable runnable = () -> {
+            if (getTypeBluetooth().equals(TypeBluetooth.SERVER) && mServerConnectedList != null) {
                         for (BluetoothServer btServer : mServerConnectedList) {
                             try {
                                 if (getAllSubscribers(btCommEv.getEventType()).contains(btServer.getClientAddress())) {
@@ -776,18 +712,14 @@ public class BluetoothManager extends BroadcastReceiver {
                             }
                         }
                     }
-                }
-            }
         };
         mSerialExecutor.execute(runnable);
     }
 
     public synchronized void onSafePublish(final BluetoothCommunicatorEvent btCommEv) {
         Log.e(TAG, "===> onSafePublish type: " +btCommEv.getEventType() +" msg: " +btCommEv.getMsgObj());
-        Thread runnable = new Thread() {
-            @Override
-            public void run() {
-                if (getTypeBluetooth().equals(TypeBluetooth.Server)){
+        Runnable runnable = () -> {
+            if (getTypeBluetooth().equals(TypeBluetooth.SERVER)) {
                     if (isEventForServerSafe(btCommEv)){
                         Log.e(TAG, "l'evento è anche per il server");
                         EventBus.getDefault().post(btCommEv.getMsgObj());
@@ -806,18 +738,15 @@ public class BluetoothManager extends BroadcastReceiver {
                         }
                     }
                 }
-            }
         };
         mSerialExecutor.execute(runnable);
     }
 
     public synchronized void subscribe(final BluetoothCommunicatorSubscriber message) {
-        //Log.e(TAG, "===> register: " +message.getAddress()+ " to type: " +message.getEventType()+ "? " +message.isSubscribe());
+        Log.e(TAG, "===> register: " + message.getAddress() + " to type: " + message.getEventType() + "? " + message.isSubscribe());
         Log.e(TAG, "subscribe: " +System.currentTimeMillis() );
-        if (getTypeBluetooth().equals(TypeBluetooth.Client)) {
-            Thread runnable = new Thread() {
-                @Override
-                public void run() {
+        if (getTypeBluetooth().equals(TypeBluetooth.CLIENT)) {
+            Runnable runnable = () -> {
                     if (isConnected) {
                         mBluetoothClient.writeJSON(message);
                         if (message.isSubscribe()) {
@@ -826,10 +755,9 @@ public class BluetoothManager extends BroadcastReceiver {
                             removeSubscription(message.getEventType());
                         }
                     }
-                }
             };
             mSerialExecutor.execute(runnable);
-        } else if (getTypeBluetooth().equals(TypeBluetooth.Server)) {
+        } else if (getTypeBluetooth().equals(TypeBluetooth.SERVER)) {
             if (message.isSubscribe()) {
                 addRoute(message.getEventType(), getDeviceMacAddress());
                 addSubscription(message.getEventType());
@@ -842,17 +770,16 @@ public class BluetoothManager extends BroadcastReceiver {
     }
 
     public synchronized void publish(final BluetoothCommunicatorEvent event) {
-//        Log.d(TAG, "publish: " +event.getMsgObj() + " type: " +event.getEventType());
+        Log.d(TAG, "publish: " + event.getMsgObj() + " type: " + event.getEventType());
         Log.e(TAG, "publish: " +System.currentTimeMillis() );
         Thread runnable = new Thread() {
             @Override
             public void run() {
-                if (getTypeBluetooth().equals(TypeBluetooth.Client) && isConnected) {
+                if (getTypeBluetooth().equals(TypeBluetooth.CLIENT) && isConnected) {
                     if (mBluetoothClient != null) {
                         mBluetoothClient.writeJSON(event);
                     }
-                } else if (getTypeBluetooth().equals(TypeBluetooth.Server) && isConnected){
-                    // onPublish(event);
+                } else if (getTypeBluetooth().equals(TypeBluetooth.SERVER) && isConnected) {
                     EventBus.getDefault().post(event);
                 }
             }
@@ -860,17 +787,11 @@ public class BluetoothManager extends BroadcastReceiver {
         mSerialExecutor.execute(runnable);
     }
 
-    /* END publish/subscribe */
-
-    /* START tuple space */
-
     public synchronized void onOut(final BluetoothCommunicatorTuple btCommEv, final String targetAddress) {
         Log.d(TAG, "onOut: "+System.currentTimeMillis());
         if (isConnected) {
-            Thread runnable = new Thread() {
-                @Override
-                public void run() {
-                    if (getTypeBluetooth().equals(TypeBluetooth.Server)) {
+            Runnable runnable = () -> {
+                if (getTypeBluetooth().equals(TypeBluetooth.SERVER)) {
                         if (mServerConnectedList != null) {
                             for (BluetoothServer btServer : mServerConnectedList) {
                                 if (btServer.getClientAddress().equals(targetAddress)) {
@@ -879,7 +800,6 @@ public class BluetoothManager extends BroadcastReceiver {
                             }
                         }
                     }
-                }
             };
             mSerialExecutor.execute(runnable);
         }
@@ -887,7 +807,7 @@ public class BluetoothManager extends BroadcastReceiver {
 
     public synchronized BluetoothCommunicatorTuple onTemplateRequest(final BluetoothCommunicatorTemplate btCommTem) {
         BluetoothCommunicatorTuple bct = null;
-        if (getTypeBluetooth().equals(TypeBluetooth.Server)) {
+        if (getTypeBluetooth().equals(TypeBluetooth.SERVER)) {
             Boolean isToDelete = btCommTem.isToDelete();
             if (isToDelete) {
                 Log.d(TAG, "onTemplateRequest: " + Bool.fromBool(btCommTem.isToDelete()));
@@ -900,18 +820,22 @@ public class BluetoothManager extends BroadcastReceiver {
         return bct;
     }
 
+    /* END publish/subscribe */
+
+    /* START tuple space */
+
     public synchronized void out(final BluetoothCommunicatorTuple btCommTup) {
-//        Log.d(TAG, "out: " +btCommTup.getMsgObj() +" from: "+ btCommTup.getSenderAddress()+ " template: " +btCommTup.getTemplate());
+        Log.d(TAG, "out: " + btCommTup.getMsgObj() + " from: " + btCommTup.getSenderAddress() + " template: " + btCommTup.getTemplate());
         Log.d(TAG, "out:time: "+System.currentTimeMillis());
         if (isConnected) {
                 Thread runnable = new Thread() {
                     @Override
                     public void run() {
-                        if (getTypeBluetooth().equals(TypeBluetooth.Client)) {
+                        if (getTypeBluetooth().equals(TypeBluetooth.CLIENT)) {
                             if (mBluetoothClient != null) {
                                 mBluetoothClient.writeJSON(btCommTup);
                             }
-                        } else if (getTypeBluetooth().equals(TypeBluetooth.Server)){
+                        } else if (getTypeBluetooth().equals(TypeBluetooth.SERVER)) {
                             EventBus.getDefault().post(btCommTup);
                         }
                     }
@@ -923,19 +847,16 @@ public class BluetoothManager extends BroadcastReceiver {
     public synchronized void rd(final Template template) {
         Log.d(TAG, "rd:time: " +System.currentTimeMillis());
         final BluetoothCommunicatorTemplate btCommTem = new BluetoothCommunicatorTemplate(template, getDeviceMacAddress(),false);
-//        Log.d(TAG, "rd: addressTuple " +btCommTem.getAddress());
+        Log.d(TAG, "rd: addressTuple " + btCommTem.getAddress());
         if (isConnected) {
-            Thread runnable = new Thread() {
-                @Override
-                public void run() {
-                    if (getTypeBluetooth().equals(TypeBluetooth.Client)) {
+            Runnable runnable = () -> {
+                if (getTypeBluetooth().equals(TypeBluetooth.CLIENT)) {
                         if (mBluetoothClient != null) {
                             mBluetoothClient.writeJSON(btCommTem);
                         }
-                    } else if (getTypeBluetooth().equals(TypeBluetooth.Server)){
+                } else if (getTypeBluetooth().equals(TypeBluetooth.SERVER)) {
                         EventBus.getDefault().post(btCommTem);
                     }
-                }
             };
             mSerialExecutor.execute(runnable);
         }
@@ -945,33 +866,28 @@ public class BluetoothManager extends BroadcastReceiver {
         Log.d(TAG, "in:time: " +System.currentTimeMillis());
         final BluetoothCommunicatorTemplate btCommTem = new BluetoothCommunicatorTemplate(template, getDeviceMacAddress(),true);
         if (isConnected) {
-            Thread runnable = new Thread() {
-                @Override
-                public void run() {
-                    if (getTypeBluetooth().equals(TypeBluetooth.Client)) {
+            Runnable runnable = () -> {
+                if (getTypeBluetooth().equals(TypeBluetooth.CLIENT)) {
                         if (mBluetoothClient != null) {
                             mBluetoothClient.writeJSON(btCommTem);
                         }
-                    } else if (getTypeBluetooth().equals(TypeBluetooth.Server)){
+                } else if (getTypeBluetooth().equals(TypeBluetooth.SERVER)) {
                         EventBus.getDefault().post(btCommTem);
                     }
-                }
             };
             mSerialExecutor.execute(runnable);
         }
     }
 
-    /* END tuple space */
-
     @Override
     public void onReceive(Context context, Intent intent) {
         Log.d(TAG, "onReceive: top");
         BluetoothDevice device = intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE);
-        if (intent.getAction().equals(BluetoothDevice.ACTION_FOUND)) {
-//            Log.d(TAG, "onReceive: ACTION_FOUND");
+        if (!intent.getAction().isEmpty() && intent.getAction().equals(BluetoothDevice.ACTION_FOUND)) {
+            Log.d(TAG, "onReceive: ACTION_FOUND");
             Log.e(TAG, "received:start: " +System.currentTimeMillis());
-            if ((mType.equals(TypeBluetooth.Client) && !isConnected)
-                    || (mType.equals(TypeBluetooth.Server) && !mAdressListServerWaitingConnection.contains(device.getAddress()))) {
+            if ((mType.equals(TypeBluetooth.CLIENT) && !isConnected)
+                    || (mType.equals(TypeBluetooth.SERVER) && !mAdressListServerWaitingConnection.contains(device.getAddress()))) {
                 EventBus.getDefault().post(device);
                 Log.e(TAG, " onReceive for BluetoothDevice ");
 
@@ -992,7 +908,7 @@ public class BluetoothManager extends BroadcastReceiver {
         if (BluetoothAdapter.ACTION_DISCOVERY_FINISHED.equals(intent.getAction())) {
             Log.e(TAG, " onReceive for BluetoothAdapter discovery finished ");
             Log.i(TAG, "onReceive: ACTION DISCOVERY FINISHED");
-            if (getTypeBluetooth().equals(TypeBluetooth.Server)){
+            if (getTypeBluetooth().equals(TypeBluetooth.SERVER)) {
                 if (getNbrClientConnected() < getNbrClientMax()) {
                     Log.d(TAG, "onReceive: server-side ho ancora posto, continuo la ricerca");
                     scanAllBluetoothDevice();
@@ -1000,12 +916,11 @@ public class BluetoothManager extends BroadcastReceiver {
                     Log.d(TAG, "onReceive: server-side ho terminato i posti, termino la ricerca");
                     cancelDiscovery();
                 }
-            } else if (getTypeBluetooth().equals(TypeBluetooth.Client)){
+            } else if (getTypeBluetooth().equals(TypeBluetooth.CLIENT)) {
                 if (isConnected) {
                     cancelDiscovery();
                     Log.d(TAG, "onReceive: client-side connected");
                 } else {
-                    //scanAllBluetoothDevice();
                     Log.d(TAG, "onReceive: client-side non ancora connesso");
                 }
             }
@@ -1013,8 +928,7 @@ public class BluetoothManager extends BroadcastReceiver {
         if (BluetoothAdapter.ACTION_SCAN_MODE_CHANGED.equals(intent.getAction())){
             Log.d(TAG, "onReceive: ACTION_SCAN_MODE_CHANGED ");
             int scanState = intent.getIntExtra(EXTRA_SCAN_MODE, -1);
-            if(mType.equals(TypeBluetooth.Client)) {
-                if (scanState == SCAN_MODE_CONNECTABLE) {
+            if (mType.equals(TypeBluetooth.CLIENT) && scanState == SCAN_MODE_CONNECTABLE) {
                     Log.d(TAG, "onReceive: ACTION_SCAN_MODE_CHANGED state scan " + scanState);
                     Log.d(TAG, "onReceive: ACTION_SCAN_MODE_CHANGED state scan " + !isDiscoverable());
                     Log.d(TAG, "onReceive: ACTION_SCAN_MODE_CHANGED state scan " + !isConnected);
@@ -1029,22 +943,20 @@ public class BluetoothManager extends BroadcastReceiver {
                             scanAllBluetoothDevice();
                         }
                     }
-                }
             }
-
         }
     }
 
     public void disconnect() {
         cancelDiscovery();
-        if (mType.equals(TypeBluetooth.Client)) {
+        if (mType.equals(TypeBluetooth.CLIENT)) {
             Log.d(TAG, "disconnect: client");
             if (mThreadClient != null) {
                 resetMode();
                 cancelDiscovery();
                 resetClient();
             }
-        } else if (mType.equals(TypeBluetooth.Server)) {
+        } else if (mType.equals(TypeBluetooth.SERVER)) {
             Log.d(TAG, "disconnect: server");
             if (!mServerConnectedList.isEmpty()) {
                 resetMode();
@@ -1054,6 +966,8 @@ public class BluetoothManager extends BroadcastReceiver {
         }
         saveBtType();
     }
+
+    /* END tuple space */
 
     public void resetClient() {
         if (mBluetoothClient != null) {
@@ -1094,11 +1008,38 @@ public class BluetoothManager extends BroadcastReceiver {
 
     public void closeAllConnection() {
         cancelDiscovery();
-        if (!mType.equals(TypeBluetooth.None)) {
+        if (!mType.equals(TypeBluetooth.NONE)) {
             resetAllThreadServer();
             resetClient();
         }
         mBluetoothAdapter = null;
+    }
+
+    public enum TypeBluetooth {
+        CLIENT,
+        SERVER,
+        NONE
+    }
+
+    @SuppressLint("StaticFieldLeak")
+    private class receiveRequestTask extends AsyncTask<Void, Void, String> {
+
+        @Override
+        protected String doInBackground(Void... params) {
+            try {
+                return getCallableMsg();
+            } catch (InterruptedException | ExecutionException e) {
+                e.printStackTrace();
+            }
+            return null;
+        }
+
+        @Override
+        protected void onPostExecute(String s) {
+            super.onPostExecute(s);
+            Log.w(TAG, "onPostExecute: ends " + System.currentTimeMillis());
+            mActivity.onReceiveRequest(s);
+        }
     }
 
 }
