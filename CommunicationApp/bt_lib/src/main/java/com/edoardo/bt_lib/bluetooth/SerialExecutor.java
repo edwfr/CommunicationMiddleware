@@ -1,5 +1,7 @@
 package com.edoardo.bt_lib.bluetooth;
 
+import android.support.annotation.NonNull;
+
 import java.util.ArrayDeque;
 import java.util.Queue;
 import java.util.concurrent.Executor;
@@ -14,7 +16,7 @@ public class SerialExecutor implements Executor {
         mExecutor = executor;
     }
 
-    public synchronized void execute(final Runnable runnable) {
+    public synchronized void execute(@NonNull final Runnable runnable) {
         mTasks.offer(() -> {
             try {
                     runnable.run();
