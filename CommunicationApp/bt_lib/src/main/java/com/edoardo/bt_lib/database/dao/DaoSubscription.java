@@ -10,7 +10,6 @@ import java.util.List;
 
 import static android.arch.persistence.room.OnConflictStrategy.REPLACE;
 
-
 @Dao
 public interface DaoSubscription {
 

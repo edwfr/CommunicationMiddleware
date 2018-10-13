@@ -4,7 +4,6 @@ import android.arch.persistence.room.Dao;
 import android.arch.persistence.room.Insert;
 import android.arch.persistence.room.Query;
 
-import com.edoardo.bt_lib.database.model.RoutingTable;
 import com.edoardo.bt_lib.database.model.TupleSpace;
 
 import java.util.List;

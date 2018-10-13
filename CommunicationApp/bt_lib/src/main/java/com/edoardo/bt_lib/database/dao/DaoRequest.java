@@ -9,8 +9,6 @@ import com.edoardo.bt_lib.database.model.Request;
 
 import java.util.List;
 
-import static android.arch.persistence.room.OnConflictStrategy.REPLACE;
-
 @Dao
 public interface DaoRequest {
 

@@ -5,7 +5,6 @@ import android.arch.persistence.room.Insert;
 import android.arch.persistence.room.Query;
 
 import com.edoardo.bt_lib.database.model.AckRow;
-import com.edoardo.bt_lib.database.model.Msg;
 
 import java.util.List;
 
