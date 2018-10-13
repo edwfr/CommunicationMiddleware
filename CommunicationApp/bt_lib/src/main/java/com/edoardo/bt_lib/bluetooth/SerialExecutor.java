@@ -15,30 +15,19 @@ public class SerialExecutor implements Executor {
     }
 
     public synchronized void execute(final Runnable runnable) {
-        mTasks.offer(new Runnable() {
-            public void run() {
-//                try {
-//                    Thread.sleep(1);
-//                    runnable.run();
-//                } catch (InterruptedException e) {
-//                    e.printStackTrace();
-//                } finally {
-//                    scheduleNext();
-//                }
-                try {
-//                    Thread.sleep(1);
+        mTasks.offer(() -> {
+            try {
                     runnable.run();
                 } finally {
                     scheduleNext();
                 }
-            }
         });
         if (mRunnableActive == null) {
             scheduleNext();
         }
     }
 
-    protected synchronized void scheduleNext() {
+    private synchronized void scheduleNext() {
         if ((mRunnableActive = mTasks.poll()) != null) {
             mExecutor.execute(mRunnableActive);
         }
