@@ -58,7 +58,6 @@ import static android.bluetooth.BluetoothAdapter.SCAN_MODE_CONNECTABLE;
 public class BluetoothManager extends BroadcastReceiver {
 
     public static final int REQUEST_DISCOVERABLE_CODE = 114;
-    //    private int bluetoothRequestAccepted;
     public static final int BLUETOOTH_REQUEST_REFUSED = 0;
     public static final int BLUETOOTH_TIME_DICOVERY_60_SEC = 15;
     public static final int BLUETOOTH_TIME_DICOVERY_120_SEC = 120;
@@ -130,17 +129,14 @@ public class BluetoothManager extends BroadcastReceiver {
     /* END DB METHOD */
 
     public void getMsg(){
-        new receiveRequestTask().execute();
+        new ReceiveRequestTask().execute();
     }
 
     public String getCallableMsg() throws ExecutionException, InterruptedException {
-        Callable<String> callable = new Callable<String>() {
-            @Override
-            public String call() throws Exception {
+        Callable<String> callable = () -> {
                 Msg msg = msgQueue.take();
                 AppDatabase.getInMemoryDatabase(mActivity).daoMsg().deleteMsg(msg.getUid());
                 return msg.getMsg();
-            }
         };
         ExecutorService executor = Executors.newFixedThreadPool(10);
         final Future<String> result = executor.submit(callable);
@@ -210,15 +206,13 @@ public class BluetoothManager extends BroadcastReceiver {
             Log.d(TAG, "addRoute: " + new Gson().toJson(AppDatabase.getInMemoryDatabase(mActivity).daoRoutingTable().isEventForReceiver(e.ordinal(), macSubscribers)));
             Log.e(TAG, "addRoute: " +System.currentTimeMillis());
             Runnable runnable = () -> {
-                if (mType.equals(TypeBluetooth.SERVER)) {
-                        if (mServerConnectedList != null) {
-                            for (BluetoothServer bluetoothServer : mServerConnectedList) {
-                                if (bluetoothServer.getClientAddress().equals(macSubscribers)) {
-                                    bluetoothServer.writeJSON(new BluetoothAck());
-                                }
-                            }
+                if (mType.equals(TypeBluetooth.SERVER) && mServerConnectedList != null) {
+                    for (BluetoothServer bluetoothServer : mServerConnectedList) {
+                        if (bluetoothServer.getClientAddress().equals(macSubscribers)) {
+                            bluetoothServer.writeJSON(new BluetoothAck());
                         }
                     }
+                }
             };
             mSerialExecutor.execute(runnable);
         } else {
@@ -458,7 +452,6 @@ public class BluetoothManager extends BroadcastReceiver {
 
     public void setTimeDiscoverable(int timeInSec) {
         mTimeDiscoverable = timeInSec;
-//        bluetoothRequestAccepted = mTimeDiscoverable;
     }
 
     public boolean isBluetoothAvailable() {
@@ -487,7 +480,6 @@ public class BluetoothManager extends BroadcastReceiver {
         if (isBluetoothAvailable()) {
             if (mBluetoothAdapter.isEnabled() && isDiscoverable()) {
                 Log.e(TAG, "startDiscoverability: Bluetooth is already discoverable");
-                return;
             } else {
                     Log.e(TAG, "startDiscoverability: Start now bluetooth Discoverability");
                     Intent discoverableIntent = new Intent(BluetoothAdapter.ACTION_REQUEST_DISCOVERABLE);
@@ -727,11 +719,10 @@ public class BluetoothManager extends BroadcastReceiver {
                     if (mServerConnectedList != null) {
                         for (BluetoothServer btServer : mServerConnectedList) {
                             try {
-                                if (getAllSubscribers(btCommEv.getEventType()).contains(btServer.getClientAddress())) {
-                                    if (!btServer.getClientAddress().equals(btCommEv.getSenderAddress())) {
+                                if (getAllSubscribers(btCommEv.getEventType()).contains(btServer.getClientAddress()) &&
+                                        !btServer.getClientAddress().equals(btCommEv.getSenderAddress())) {
                                         btServer.writeJSON(btCommEv);
                                     }
-                                }
                             } catch (InvalidCallException e1) {
                                 Log.d(TAG, "exception: " +e1.getMessage() );
                             }
@@ -772,9 +763,7 @@ public class BluetoothManager extends BroadcastReceiver {
     public synchronized void publish(final BluetoothCommunicatorEvent event) {
         Log.d(TAG, "publish: " + event.getMsgObj() + " type: " + event.getEventType());
         Log.e(TAG, "publish: " +System.currentTimeMillis() );
-        Thread runnable = new Thread() {
-            @Override
-            public void run() {
+        Runnable runnable = () -> {
                 if (getTypeBluetooth().equals(TypeBluetooth.CLIENT) && isConnected) {
                     if (mBluetoothClient != null) {
                         mBluetoothClient.writeJSON(event);
@@ -782,7 +771,6 @@ public class BluetoothManager extends BroadcastReceiver {
                 } else if (getTypeBluetooth().equals(TypeBluetooth.SERVER) && isConnected) {
                     EventBus.getDefault().post(event);
                 }
-            }
         };
         mSerialExecutor.execute(runnable);
     }
@@ -791,15 +779,13 @@ public class BluetoothManager extends BroadcastReceiver {
         Log.d(TAG, "onOut: "+System.currentTimeMillis());
         if (isConnected) {
             Runnable runnable = () -> {
-                if (getTypeBluetooth().equals(TypeBluetooth.SERVER)) {
-                        if (mServerConnectedList != null) {
-                            for (BluetoothServer btServer : mServerConnectedList) {
-                                if (btServer.getClientAddress().equals(targetAddress)) {
-                                    btServer.writeJSON(btCommEv);
-                                }
-                            }
+                if (getTypeBluetooth().equals(TypeBluetooth.SERVER) && mServerConnectedList != null) {
+                    for (BluetoothServer btServer : mServerConnectedList) {
+                        if (btServer.getClientAddress().equals(targetAddress)) {
+                            btServer.writeJSON(btCommEv);
                         }
                     }
+                }
             };
             mSerialExecutor.execute(runnable);
         }
@@ -828,9 +814,7 @@ public class BluetoothManager extends BroadcastReceiver {
         Log.d(TAG, "out: " + btCommTup.getMsgObj() + " from: " + btCommTup.getSenderAddress() + " template: " + btCommTup.getTemplate());
         Log.d(TAG, "out:time: "+System.currentTimeMillis());
         if (isConnected) {
-                Thread runnable = new Thread() {
-                    @Override
-                    public void run() {
+            Runnable runnable = () -> {
                         if (getTypeBluetooth().equals(TypeBluetooth.CLIENT)) {
                             if (mBluetoothClient != null) {
                                 mBluetoothClient.writeJSON(btCommTup);
@@ -838,7 +822,6 @@ public class BluetoothManager extends BroadcastReceiver {
                         } else if (getTypeBluetooth().equals(TypeBluetooth.SERVER)) {
                             EventBus.getDefault().post(btCommTup);
                         }
-                    }
                 };
                 mSerialExecutor.execute(runnable);
         }
@@ -897,12 +880,11 @@ public class BluetoothManager extends BroadcastReceiver {
             Log.d(TAG, "onReceive: ACTION_BOND_STATE_CHANGED");
             int prevBondState = intent.getIntExtra(BluetoothDevice.EXTRA_PREVIOUS_BOND_STATE, -1);
             int bondState = intent.getIntExtra(BluetoothDevice.EXTRA_BOND_STATE, -1);
-            if (prevBondState == BluetoothDevice.BOND_BONDING) {
-                // check for both BONDED and NONE here because in some error cases the bonding fails and we need to fail gracefully.
-                if (bondState == BluetoothDevice.BOND_BONDED || bondState == BluetoothDevice.BOND_NONE) {
+            // check for both BONDED and NONE here because in some error cases the bonding fails and we need to fail gracefully.
+            if ((prevBondState == BluetoothDevice.BOND_BONDING) && (bondState == BluetoothDevice.BOND_BONDED ||
+                    bondState == BluetoothDevice.BOND_NONE)) {
                     EventBus.getDefault().post(new BondedDevice(device.getAddress()));
                     Log.e(TAG, " onReceive for BluetoothDevice ");
-                }
             }
         }
         if (BluetoothAdapter.ACTION_DISCOVERY_FINISHED.equals(intent.getAction())) {
@@ -930,8 +912,8 @@ public class BluetoothManager extends BroadcastReceiver {
             int scanState = intent.getIntExtra(EXTRA_SCAN_MODE, -1);
             if (mType.equals(TypeBluetooth.CLIENT) && scanState == SCAN_MODE_CONNECTABLE) {
                     Log.d(TAG, "onReceive: ACTION_SCAN_MODE_CHANGED state scan " + scanState);
-                    Log.d(TAG, "onReceive: ACTION_SCAN_MODE_CHANGED state scan " + !isDiscoverable());
-                    Log.d(TAG, "onReceive: ACTION_SCAN_MODE_CHANGED state scan " + !isConnected);
+                Log.d(TAG, "onReceive: ACTION_SCAN_MODE_CHANGED !isDiscoverable " + !isDiscoverable());
+                Log.d(TAG, "onReceive: ACTION_SCAN_MODE_CHANGED !isConnected " + !isConnected);
                     if (mBluetoothClient != null) {
                         if (mBluetoothClient.isOutOfService() && !isDiscoverable() && !isConnected) {
                             Log.d(TAG, "onReceive: " + (mBluetoothClient.isOutOfService() && !isDiscoverable() && !isConnected));
@@ -1022,14 +1004,17 @@ public class BluetoothManager extends BroadcastReceiver {
     }
 
     @SuppressLint("StaticFieldLeak")
-    private class receiveRequestTask extends AsyncTask<Void, Void, String> {
+    private class ReceiveRequestTask extends AsyncTask<Void, Void, String> {
 
         @Override
         protected String doInBackground(Void... params) {
             try {
                 return getCallableMsg();
-            } catch (InterruptedException | ExecutionException e) {
-                e.printStackTrace();
+            } catch (ExecutionException e) {
+                Log.e(TAG, e.getLocalizedMessage());
+            } catch (InterruptedException e) {
+                Log.e(TAG, e.getLocalizedMessage());
+                Thread.currentThread().interrupt();
             }
             return null;
         }
