@@ -12,32 +12,30 @@ import java.io.InputStream;
 import java.io.ObjectInputStream;
 import java.io.ObjectOutputStream;
 import java.io.OutputStreamWriter;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 
 public abstract class BluetoothThread implements Runnable {
 
     private static final String TAG = BluetoothThread.class.getSimpleName();
-
-    public boolean CONTINUE_READ_WRITE = true;
-
-    public String mUuiDappIdentifier;
-    public BluetoothAdapter mBluetoothAdapter;
-    public BluetoothSocket mSocket;
-    public InputStream mInputStream;
-    public String mMyAddressMac;
+    private static final int MAX_INPUT_STREAM_EXC = 100;
+    BluetoothAdapter mBluetoothAdapter;
+    BluetoothSocket mSocket;
+    InputStream mInputStream;
+    String mMyAddressMac;
+    boolean quitConnectionFromServer;
+    private AtomicBoolean continueReadWrite = new AtomicBoolean(true);
     private OutputStreamWriter mOutputStreamWriter;
     private ObjectOutputStream mObjectOutputStream;
     private ObjectInputStream mObjectInputStream;
-    private int mCountObjectInputStreamExection;
-    private boolean mIsConnected;
-    boolean quitConnectionFromServer;
+    private int mCountObjectInputStreamException;
+    private AtomicBoolean mIsConnected;
 
-    public BluetoothThread(BluetoothAdapter bluetoothAdapter, String uuiDappIdentifier, Activity activity) {
+    BluetoothThread(BluetoothAdapter bluetoothAdapter, Activity activity) {
         mBluetoothAdapter = bluetoothAdapter;
-        mUuiDappIdentifier = uuiDappIdentifier;
         mMyAddressMac = android.provider.Settings.Secure.getString(activity.getContentResolver(), "bluetooth_address");
-        mIsConnected = false;
-        mCountObjectInputStreamExection = 0;
+        mIsConnected = new AtomicBoolean(false);
+        mCountObjectInputStreamException = 0;
     }
 
     @Override
@@ -49,68 +47,64 @@ public abstract class BluetoothThread implements Runnable {
 
             initObjReader();
 
-            mIsConnected = true;
+            mIsConnected.set(true);
             int bufferSize = 1024;
-            int bytesRead;
             byte[] buffer = new byte[bufferSize];
 
-            if(mSocket == null) return;
+            if (mSocket == null) {
+                return;
+            }
             mOutputStreamWriter = new OutputStreamWriter(mSocket.getOutputStream());
-            if(mSocket == null) return;
             mObjectOutputStream = new ObjectOutputStream(mSocket.getOutputStream());
-
-//            mOutputStreamWriter.flush();
-//            mObjectOutputStream.flush();
 
             onConnectionSuccess();
 
-//            writeJSON(new Object());
-
-            while (CONTINUE_READ_WRITE) {
+            while (this.continueReadWrite()) {
 
                 synchronized (this) {
-                    try {
-                        final StringBuilder sb = new StringBuilder();
-                        if(mInputStream == null) return;
-                        bytesRead = mInputStream.read(buffer);
-                        if (bytesRead != -1) {
-                            String result = "";
-                            while ((bytesRead == bufferSize) && (buffer[bufferSize] != 0)) {
-                                result = result.concat(new String(buffer, 0, bytesRead));
-                                if(mInputStream == null) return;
-                                bytesRead = mInputStream.read(buffer);
-                            }
-                            result = result + new String(buffer, 0, bytesRead);
-                            sb.append(result);
-                        }
-                        Log.w(TAG, "run: msg received " +System.currentTimeMillis());
-                        JsonHelper.jsonToObject(sb.toString());
-                    } catch (IOException e) {
-                        Log.e(TAG, "===> IOException : " + e.getMessage());
-                        lifeline();
-                        if(mIsConnected && (e.getMessage().contains("bt socket closed"))){
-                            this.closeConnection();
-                            onConnectionFail();
-                            mIsConnected = false;
-                        }
-                    }
-
+                    readMsgFromInputStream(bufferSize, buffer);
                 }
             }
         } catch (IOException e) {
             Log.e(TAG, "===> ERROR thread bluetooth : " + e.getMessage());
-            e.printStackTrace();
-            if (mIsConnected) {
+            if (isConnected()) {
                 onConnectionFail();
             }
-            mIsConnected = false;
+            this.setIsConnectedToFalse();
+        }
+    }
+
+    private void readMsgFromInputStream(int bufferSize, byte[] buffer) {
+        int bytesRead;
+        try {
+            final StringBuilder sb = new StringBuilder();
+            bytesRead = mInputStream.read(buffer);
+            if (bytesRead != -1) {
+                String result = "";
+                while ((bytesRead == bufferSize) && (buffer[bufferSize] != 0)) {
+                    result = result.concat(new String(buffer, 0, bytesRead));
+                    bytesRead = mInputStream.read(buffer);
+                }
+                result = result.concat(new String(buffer, 0, bytesRead));
+                sb.append(result);
+            }
+            Log.w(TAG, "run: msg received " + System.currentTimeMillis());
+            JsonHelper.jsonToObject(sb.toString());
+        } catch (IOException e) {
+            Log.e(TAG, "===> IOException : " + e.getMessage());
+            lifeline();
+            if (isConnected() && (e.getMessage().contains("bt socket closed"))) {
+                this.closeConnection();
+                onConnectionFail();
+                this.setIsConnectedToFalse();
+            }
         }
     }
 
     private void lifeline(){
-        mCountObjectInputStreamExection++;
-        if(mCountObjectInputStreamExection>100){
-            CONTINUE_READ_WRITE = false;
+        mCountObjectInputStreamException++;
+        if (mCountObjectInputStreamException > MAX_INPUT_STREAM_EXC) {
+            this.setIsConnectedToFalse();
             if (isConnected()) {
                 this.closeConnection();
             }
@@ -127,9 +121,6 @@ public abstract class BluetoothThread implements Runnable {
 
     void writeJSON(Object objToWrite) {
         String message = JsonHelper.objectToJsonString(objToWrite);
-//        Log.d(TAG, "writeJSON:1: message send" +message+" time: " +System.currentTimeMillis());
-//        Log.d(TAG, "writeJSON:1: message time: " +System.currentTimeMillis());
-//        Log.d(TAG, "writeJSON: message Byte: " +message.length());
         try {
             if (mOutputStreamWriter != null) {
                 mOutputStreamWriter.write(message);
@@ -137,25 +128,20 @@ public abstract class BluetoothThread implements Runnable {
                 mOutputStreamWriter.flush();
             }
         } catch (IOException e) {
-            e.printStackTrace();
+            Log.e(TAG, e.getLocalizedMessage());
         }
     }
 
     public void closeConnection() {
         if (mSocket != null) {
             try {
-                CONTINUE_READ_WRITE = false;
+                this.stopReadWrite();
                 mInputStream.close();
-                mInputStream = null;
                 mOutputStreamWriter.close();
-                mOutputStreamWriter = null;
                 mObjectOutputStream.close();
-                mObjectOutputStream = null;
                 mObjectInputStream.close();
-                mObjectInputStream = null;
                 mSocket.close();
-                mSocket = null;
-                mIsConnected = false;
+                this.setIsConnectedToFalse();
             } catch (Exception e) {
                 Log.e(TAG, "===+++> Connection already closed : "+e.getMessage());
             }
@@ -163,7 +149,23 @@ public abstract class BluetoothThread implements Runnable {
     }
 
     boolean isConnected() {
-        return mIsConnected;
+        return mIsConnected.get();
+    }
+
+    boolean continueReadWrite() {
+        return continueReadWrite.get();
+    }
+
+    void stopReadWrite() {
+        this.continueReadWrite.set(false);
+    }
+
+    void startReadWrite() {
+        this.continueReadWrite.set(true);
+    }
+
+    void setIsConnectedToFalse() {
+        mIsConnected.set(false);
     }
 
 }
