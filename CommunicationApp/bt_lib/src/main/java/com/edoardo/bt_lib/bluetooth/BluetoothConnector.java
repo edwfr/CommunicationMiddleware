@@ -11,25 +11,23 @@ import java.util.List;
 import java.util.UUID;
 
 
-public class BluetoothConnector {
+class BluetoothConnector {
 
-    private final static String TAG = BluetoothConnector.class.getSimpleName();
+    private static final String TAG = BluetoothConnector.class.getSimpleName();
     private BluetoothSocket bluetoothSocket;
     private BluetoothDevice bluetoothDevice;
     private BluetoothAdapter bluetoothAdapter;
     private List<UUID> uuidCandidates;
     private int candidate;
-    private UUID my_uuid;
 
-    protected BluetoothConnector(BluetoothDevice bluetoothDevice, BluetoothAdapter bluetoothAdapter, UUID uuid) {
+    BluetoothConnector(BluetoothDevice bluetoothDevice, BluetoothAdapter bluetoothAdapter, UUID uuid) {
         this.bluetoothDevice = bluetoothDevice;
         this.bluetoothAdapter = bluetoothAdapter;
         this.uuidCandidates = new ArrayList<>();
         this.uuidCandidates.add(uuid);
-        my_uuid = uuid;
     }
-    
-    protected BluetoothSocket connect() throws IOException {
+
+    BluetoothSocket connect() throws IOException {
         boolean success = false;
         while(selectSocket()) {
             bluetoothAdapter.cancelDiscovery();
@@ -59,21 +57,6 @@ public class BluetoothConnector {
         bluetoothSocket = bluetoothDevice.createRfcommSocketToServiceRecord(uuid);
 
         return true;
-
     }
 
-    private void connectSocket() {
-
-        BluetoothSocket tmp = null;
-
-        try {
-            // Get a BluetoothSocket to connect with the given BluetoothDevice.
-            // MY_UUID is the app's UUID string, also used in the server code.
-            tmp = bluetoothDevice.createRfcommSocketToServiceRecord(my_uuid);
-        } catch (IOException e) {
-            Log.e(TAG, "Socket's create() method failed", e);
-        }
-        bluetoothSocket = tmp;
-
-    }
 }
