@@ -5,12 +5,12 @@ import android.bluetooth.BluetoothAdapter;
 import android.bluetooth.BluetoothServerSocket;
 import android.util.Log;
 
-import java.io.IOException;
-import java.util.UUID;
-
+import com.edoardo.bt_lib.event.ClientConnectionQuitted;
 import com.edoardo.bt_lib.event.ServerConnectionFail;
 import com.edoardo.bt_lib.event.ServerConnectionSuccess;
-import com.edoardo.bt_lib.event.ClientConnectionQuitted;
+
+import java.io.IOException;
+import java.util.UUID;
 
 import de.greenrobot.event.EventBus;
 
@@ -20,11 +20,11 @@ public class BluetoothServer extends BluetoothThread {
 
     private UUID mUUID;
     private BluetoothServerSocket mServerSocket;
-    public String mClientAddress;
+    private String mClientAddress;
 
-    public BluetoothServer(BluetoothAdapter bluetoothAdapter, String uuiDappIdentifier, String adressMacClient, Activity activity) {
-        super(bluetoothAdapter, uuiDappIdentifier, activity);
-        mClientAddress = adressMacClient;
+    BluetoothServer(BluetoothAdapter bluetoothAdapter, String uuiDappIdentifier, String addressMacClient, Activity activity) {
+        super(bluetoothAdapter, activity);
+        mClientAddress = addressMacClient;
         mUUID = UUID.fromString(uuiDappIdentifier + "-" + mClientAddress.replace(":", ""));
         quitConnectionFromServer = false;
     }
