@@ -19,28 +19,27 @@ public class BluetoothClient extends BluetoothThread {
     private static final String TAG = BluetoothClient.class.getSimpleName();
 
     private UUID mUUID;
-    private BluetoothDevice mBluetoothDevice;
-    private BluetoothConnector mBluetoothConnector;
     private String mServerAddress;
     private AtomicBoolean outOfService;
 
-    private boolean KEEP_TRYING_CONNEXION;
+    private AtomicBoolean keepTryingConnection;
 
-    public BluetoothClient(BluetoothAdapter bluetoothAdapter, String uuiDappIdentifier, String addressMacServer, Activity activity) {
-        super(bluetoothAdapter, uuiDappIdentifier, activity);
+    BluetoothClient(BluetoothAdapter bluetoothAdapter, String uuidAppIdentifier, String addressMacServer, Activity activity) {
+        super(bluetoothAdapter, activity);
         mServerAddress = addressMacServer;
-        mUUID = UUID.fromString(uuiDappIdentifier + "-" + mMyAddressMac.replace(":", ""));
-        KEEP_TRYING_CONNEXION = true;
+        mUUID = UUID.fromString(uuidAppIdentifier + "-" + mMyAddressMac.replace(":", ""));
+        keepTryingConnection = new AtomicBoolean(false);
+        this.startTryingConnection();
         outOfService = new AtomicBoolean(false);
     }
 
     @Override
     public void waitForConnection(){
 
-        mBluetoothDevice = mBluetoothAdapter.getRemoteDevice(mServerAddress);
+        BluetoothDevice mBluetoothDevice = mBluetoothAdapter.getRemoteDevice(mServerAddress);
 
-        while ((mInputStream == null) && CONTINUE_READ_WRITE && KEEP_TRYING_CONNEXION) {
-            mBluetoothConnector = new BluetoothConnector(mBluetoothDevice, mBluetoothAdapter, mUUID);
+        while ((mInputStream == null) && continueReadWrite() && keepTryingConnection()) {
+            BluetoothConnector mBluetoothConnector = new BluetoothConnector(mBluetoothDevice, mBluetoothAdapter, mUUID);
 
             try {
                 mSocket = mBluetoothConnector.connect();
@@ -51,23 +50,22 @@ public class BluetoothClient extends BluetoothThread {
                 Log.d(TAG, "waitForConnection: isOutOfService");
                 outOfService.set(true);
                 Log.e(TAG,"===> mSocket IOException : "+ e1.getMessage());
-                e1.printStackTrace();
             }
         }
 
         if (mSocket == null) {
             Log.e(TAG, "===> mSocket is null");
-            return;
         }
     }
 
-    public boolean isOutOfService(){
+    boolean isOutOfService() {
         Log.d(TAG, "isOutOfService: "+outOfService.get());
         return outOfService.get();
     }
 
     @Override
     public void initObjReader() throws IOException {
+        // do nothing
     }
 
     @Override
@@ -80,14 +78,25 @@ public class BluetoothClient extends BluetoothThread {
         EventBus.getDefault().post(new ClientConnectionFail(mServerAddress));
     }
 
-    public String getServerAddress() {
+    String getServerAddress() {
         return this.mServerAddress;
     }
 
     @Override
     public void closeConnection() {
-        KEEP_TRYING_CONNEXION = false;
+        this.stopTryingConnection();
         super.closeConnection();
     }
 
+    private void startTryingConnection() {
+        this.keepTryingConnection.set(true);
+    }
+
+    private void stopTryingConnection() {
+        this.keepTryingConnection.set(false);
+    }
+
+    private boolean keepTryingConnection() {
+        return this.keepTryingConnection.get();
+    }
 }
