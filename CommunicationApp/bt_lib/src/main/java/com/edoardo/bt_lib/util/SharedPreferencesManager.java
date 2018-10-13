@@ -8,13 +8,12 @@ import com.edoardo.bt_lib.bluetooth.BluetoothManager;
 public class SharedPreferencesManager {
 
     private static final String APP_SETTINGS = "BT_LIB_SETTINGS";
-    private static final String TAG = SharedPreferencesManager.class.getSimpleName();
-
-
     // properties
     private static final String BT_TYPE = "BT_TYPE";
     private static final String SERVER_ADDRESS = "SERVER_ADDRESS";
 
+    private SharedPreferencesManager() {
+    }
 
     private static SharedPreferences getSharedPreferences(Context context) {
         return context.getSharedPreferences(APP_SETTINGS, Context.MODE_PRIVATE);
