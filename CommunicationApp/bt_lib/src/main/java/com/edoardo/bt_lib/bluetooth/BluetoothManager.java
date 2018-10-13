@@ -59,8 +59,6 @@ public class BluetoothManager extends BroadcastReceiver {
 
     public static final int REQUEST_DISCOVERABLE_CODE = 114;
     public static final int BLUETOOTH_REQUEST_REFUSED = 0;
-    public static final int BLUETOOTH_TIME_DICOVERY_60_SEC = 15;
-    public static final int BLUETOOTH_TIME_DICOVERY_120_SEC = 120;
     public static final int BLUETOOTH_TIME_DISCOVERY_300_SEC = 300;
     private static final String TAG = BluetoothManager.class.getSimpleName();
     private int bluetoothNbrClientMax = 7;
@@ -400,10 +398,11 @@ public class BluetoothManager extends BroadcastReceiver {
 
     public String getDeviceMacAddress() {
         if (mBluetoothAdapter != null) {
-            if (mBluetoothAdapter.getAddress().equals("02:00:00:00:00:00")) {
+            String tAddress = mBluetoothAdapter.getAddress();
+            if (tAddress.equals("02:00:00:00:00:00")) {
                 return android.provider.Settings.Secure.getString(mActivity.getContentResolver(), "bluetooth_address");
             }
-            return mBluetoothAdapter.getAddress();
+            return tAddress;
         }
         return null;
     }
@@ -625,19 +624,27 @@ public class BluetoothManager extends BroadcastReceiver {
         Log.e(TAG, "sendMessageToTarget: time: " +System.currentTimeMillis());
         Runnable runnable = () -> {
                 if (mType != null && isConnected) {
-                    if (mServerConnectedList != null) {
-                        for (BluetoothServer bluetoothServer : mServerConnectedList) {
-                            if (bluetoothServer.getClientAddress().equals(message.getTargetAddress())) {
-                                bluetoothServer.writeJSON(message.getMsgObj());
-                            }
-                        }
-                    }
-                    if (mBluetoothClient != null) {
-                        mBluetoothClient.writeJSON(message);
-                    }
+                    sendServerMsgToTarget(message);
+                    sendClientMsgToTarget(message);
                 }
         };
         mSerialExecutor.execute(runnable);
+    }
+
+    private void sendClientMsgToTarget(BluetoothCommunicatorPair message) {
+        if (mBluetoothClient != null) {
+            mBluetoothClient.writeJSON(message);
+        }
+    }
+
+    private void sendServerMsgToTarget(BluetoothCommunicatorPair message) {
+        if (mServerConnectedList != null) {
+            for (BluetoothServer bluetoothServer : mServerConnectedList) {
+                if (bluetoothServer.getClientAddress().equals(message.getTargetAddress())) {
+                    bluetoothServer.writeJSON(message.getMsgObj());
+                }
+            }
+        }
     }
 
     /* START send receive pattern */
@@ -693,7 +700,8 @@ public class BluetoothManager extends BroadcastReceiver {
         Log.e(TAG, "===> onPublish" + System.currentTimeMillis());
 
         Runnable runnable = () -> {
-            if (getTypeBluetooth().equals(TypeBluetooth.SERVER) && mServerConnectedList != null) {
+            if (getTypeBluetooth().equals(TypeBluetooth.SERVER) && mServerConnectedList != null && isEventForServer
+                    (btCommEv)) {
                         for (BluetoothServer btServer : mServerConnectedList) {
                             try {
                                 if (getAllSubscribers(btCommEv.getEventType()).contains(btServer.getClientAddress())) {
@@ -716,21 +724,25 @@ public class BluetoothManager extends BroadcastReceiver {
                         Log.e(TAG, "l'evento è anche per il server");
                         EventBus.getDefault().post(btCommEv.getMsgObj());
                     }
-                    if (mServerConnectedList != null) {
-                        for (BluetoothServer btServer : mServerConnectedList) {
-                            try {
-                                if (getAllSubscribers(btCommEv.getEventType()).contains(btServer.getClientAddress()) &&
-                                        !btServer.getClientAddress().equals(btCommEv.getSenderAddress())) {
-                                        btServer.writeJSON(btCommEv);
-                                    }
-                            } catch (InvalidCallException e1) {
-                                Log.d(TAG, "exception: " +e1.getMessage() );
-                            }
-                        }
-                    }
-                }
+                publishServerSafely(btCommEv);
+            }
         };
         mSerialExecutor.execute(runnable);
+    }
+
+    private void publishServerSafely(BluetoothCommunicatorEvent btCommEv) {
+        if (mServerConnectedList != null) {
+            for (BluetoothServer btServer : mServerConnectedList) {
+                try {
+                    if (getAllSubscribers(btCommEv.getEventType()).contains(btServer.getClientAddress()) &&
+                            !btServer.getClientAddress().equals(btCommEv.getSenderAddress())) {
+                        btServer.writeJSON(btCommEv);
+                    }
+                } catch (InvalidCallException e1) {
+                    Log.d(TAG, "exception: " + e1.getMessage());
+                }
+            }
+        }
     }
 
     public synchronized void subscribe(final BluetoothCommunicatorSubscriber message) {
@@ -866,66 +878,82 @@ public class BluetoothManager extends BroadcastReceiver {
     public void onReceive(Context context, Intent intent) {
         Log.d(TAG, "onReceive: top");
         BluetoothDevice device = intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE);
-        if (!intent.getAction().isEmpty() && intent.getAction().equals(BluetoothDevice.ACTION_FOUND)) {
-            Log.d(TAG, "onReceive: ACTION_FOUND");
-            Log.e(TAG, "received:start: " +System.currentTimeMillis());
-            if ((mType.equals(TypeBluetooth.CLIENT) && !isConnected)
-                    || (mType.equals(TypeBluetooth.SERVER) && !mAdressListServerWaitingConnection.contains(device.getAddress()))) {
-                EventBus.getDefault().post(device);
-                Log.e(TAG, " onReceive for BluetoothDevice ");
-
-            }
+        if (intent.getAction() != null && intent.getAction().equals(BluetoothDevice.ACTION_FOUND)) {
+            elabOnActionFound(device);
         }
         if (intent.getAction().equals(BluetoothDevice.ACTION_BOND_STATE_CHANGED)) {
-            Log.d(TAG, "onReceive: ACTION_BOND_STATE_CHANGED");
-            int prevBondState = intent.getIntExtra(BluetoothDevice.EXTRA_PREVIOUS_BOND_STATE, -1);
-            int bondState = intent.getIntExtra(BluetoothDevice.EXTRA_BOND_STATE, -1);
-            // check for both BONDED and NONE here because in some error cases the bonding fails and we need to fail gracefully.
-            if ((prevBondState == BluetoothDevice.BOND_BONDING) && (bondState == BluetoothDevice.BOND_BONDED ||
-                    bondState == BluetoothDevice.BOND_NONE)) {
-                    EventBus.getDefault().post(new BondedDevice(device.getAddress()));
-                    Log.e(TAG, " onReceive for BluetoothDevice ");
-            }
+            elabOnActionBondStateChanged(intent, device);
         }
         if (BluetoothAdapter.ACTION_DISCOVERY_FINISHED.equals(intent.getAction())) {
-            Log.e(TAG, " onReceive for BluetoothAdapter discovery finished ");
-            Log.i(TAG, "onReceive: ACTION DISCOVERY FINISHED");
-            if (getTypeBluetooth().equals(TypeBluetooth.SERVER)) {
-                if (getNbrClientConnected() < getNbrClientMax()) {
-                    Log.d(TAG, "onReceive: server-side ho ancora posto, continuo la ricerca");
+            elabOnActionDiscoveryFinished();
+        }
+        if (BluetoothAdapter.ACTION_SCAN_MODE_CHANGED.equals(intent.getAction())){
+            elabOnActionScanModeChanged(intent);
+        }
+    }
+
+    private void elabOnActionScanModeChanged(Intent intent) {
+        Log.d(TAG, "onReceive: ACTION_SCAN_MODE_CHANGED ");
+        int scanState = intent.getIntExtra(EXTRA_SCAN_MODE, -1);
+        if (mType.equals(TypeBluetooth.CLIENT) && scanState == SCAN_MODE_CONNECTABLE) {
+            Log.d(TAG, "onReceive: ACTION_SCAN_MODE_CHANGED state scan " + scanState);
+            Log.d(TAG, "onReceive: ACTION_SCAN_MODE_CHANGED !isDiscoverable " + !isDiscoverable());
+            Log.d(TAG, "onReceive: ACTION_SCAN_MODE_CHANGED !isConnected " + !isConnected);
+            if (mBluetoothClient != null) {
+                if (mBluetoothClient.isOutOfService() && !isDiscoverable() && !isConnected) {
+                    Log.d(TAG, "onReceive: " + (mBluetoothClient.isOutOfService() && !isDiscoverable() && !isConnected));
                     scanAllBluetoothDevice();
-                } else if (getNbrClientConnected() == getNbrClientMax()) {
-                    Log.d(TAG, "onReceive: server-side ho terminato i posti, termino la ricerca");
-                    cancelDiscovery();
                 }
-            } else if (getTypeBluetooth().equals(TypeBluetooth.CLIENT)) {
-                if (isConnected) {
-                    cancelDiscovery();
-                    Log.d(TAG, "onReceive: client-side connected");
-                } else {
-                    Log.d(TAG, "onReceive: client-side non ancora connesso");
+            } else {
+                if (!isDiscoverable() && !isConnected) {
+                    Log.d(TAG, "onReceive: " + (!isDiscoverable() && !isConnected));
+                    scanAllBluetoothDevice();
                 }
             }
         }
-        if (BluetoothAdapter.ACTION_SCAN_MODE_CHANGED.equals(intent.getAction())){
-            Log.d(TAG, "onReceive: ACTION_SCAN_MODE_CHANGED ");
-            int scanState = intent.getIntExtra(EXTRA_SCAN_MODE, -1);
-            if (mType.equals(TypeBluetooth.CLIENT) && scanState == SCAN_MODE_CONNECTABLE) {
-                    Log.d(TAG, "onReceive: ACTION_SCAN_MODE_CHANGED state scan " + scanState);
-                Log.d(TAG, "onReceive: ACTION_SCAN_MODE_CHANGED !isDiscoverable " + !isDiscoverable());
-                Log.d(TAG, "onReceive: ACTION_SCAN_MODE_CHANGED !isConnected " + !isConnected);
-                    if (mBluetoothClient != null) {
-                        if (mBluetoothClient.isOutOfService() && !isDiscoverable() && !isConnected) {
-                            Log.d(TAG, "onReceive: " + (mBluetoothClient.isOutOfService() && !isDiscoverable() && !isConnected));
-                            scanAllBluetoothDevice();
-                        }
-                    } else {
-                        if (!isDiscoverable() && !isConnected) {
-                            Log.d(TAG, "onReceive: " + (!isDiscoverable() && !isConnected));
-                            scanAllBluetoothDevice();
-                        }
-                    }
+    }
+
+    private void elabOnActionDiscoveryFinished() {
+        Log.e(TAG, " onReceive for BluetoothAdapter discovery finished ");
+        Log.i(TAG, "onReceive: ACTION DISCOVERY FINISHED");
+        if (getTypeBluetooth().equals(TypeBluetooth.SERVER)) {
+            if (getNbrClientConnected() < getNbrClientMax()) {
+                Log.d(TAG, "onReceive: server-side ho ancora posto, continuo la ricerca");
+                scanAllBluetoothDevice();
+            } else if (getNbrClientConnected() == getNbrClientMax()) {
+                Log.d(TAG, "onReceive: server-side ho terminato i posti, termino la ricerca");
+                cancelDiscovery();
             }
+        } else if (getTypeBluetooth().equals(TypeBluetooth.CLIENT)) {
+            if (isConnected) {
+                cancelDiscovery();
+                Log.d(TAG, "onReceive: client-side connected");
+            } else {
+                Log.d(TAG, "onReceive: client-side non ancora connesso");
+            }
+        }
+    }
+
+    private void elabOnActionBondStateChanged(Intent intent, BluetoothDevice device) {
+        Log.d(TAG, "onReceive: ACTION_BOND_STATE_CHANGED");
+        int prevBondState = intent.getIntExtra(BluetoothDevice.EXTRA_PREVIOUS_BOND_STATE, -1);
+        int bondState = intent.getIntExtra(BluetoothDevice.EXTRA_BOND_STATE, -1);
+        // check for both BONDED and NONE here because in some error cases the bonding fails and we need to fail gracefully.
+        if ((prevBondState == BluetoothDevice.BOND_BONDING) && (bondState == BluetoothDevice.BOND_BONDED ||
+                bondState == BluetoothDevice.BOND_NONE)) {
+            EventBus.getDefault().post(new BondedDevice(device.getAddress()));
+            Log.e(TAG, " onReceive for BluetoothDevice ");
+        }
+    }
+
+    private void elabOnActionFound(BluetoothDevice device) {
+        Log.d(TAG, "onReceive: ACTION_FOUND");
+        Log.e(TAG, "received:start: " + System.currentTimeMillis());
+        if ((mType.equals(TypeBluetooth.CLIENT) && !isConnected)
+                || (mType.equals(TypeBluetooth.SERVER) && !mAdressListServerWaitingConnection.contains(device.getAddress()))) {
+            EventBus.getDefault().post(device);
+            Log.e(TAG, " onReceive for BluetoothDevice ");
+
         }
     }
 
