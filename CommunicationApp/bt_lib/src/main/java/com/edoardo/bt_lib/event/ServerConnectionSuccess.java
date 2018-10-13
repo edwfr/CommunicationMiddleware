@@ -8,7 +8,6 @@ public class ServerConnectionSuccess {
         this.clientAddress = clientAddress;
     }
 
-
     public String getClientAddress() {
         return clientAddress;
     }
