@@ -19,9 +19,6 @@ public class BluetoothCommunicatorTemplate implements Comparable{
         this.address = address;
     }
 
-    public BluetoothCommunicatorTemplate(){}
-
-
     public Template getTemplate() {
         return template;
     }

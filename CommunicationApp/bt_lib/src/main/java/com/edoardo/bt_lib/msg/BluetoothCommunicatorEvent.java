@@ -16,9 +16,6 @@ public class BluetoothCommunicatorEvent {
         this.senderAddress = senderAddress;
     }
 
-    public BluetoothCommunicatorEvent() {
-    }
-
     public BluetoothCommunicatorString getMsgObj() {
         return msgObj;
     }

@@ -23,9 +23,6 @@ public class BluetoothCommunicatorTuple implements Comparable{
         this.senderAddress = senderAddress;
     }
 
-    public BluetoothCommunicatorTuple() {
-    }
-
     public BluetoothCommunicatorString getMsgObj() {
         return msgObj;
     }

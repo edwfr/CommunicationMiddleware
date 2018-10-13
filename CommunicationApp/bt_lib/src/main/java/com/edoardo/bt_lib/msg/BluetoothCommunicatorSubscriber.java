@@ -17,9 +17,6 @@ public class BluetoothCommunicatorSubscriber {
         this.address = address;
     }
 
-    public BluetoothCommunicatorSubscriber(){}
-
-
     public EventType getEventType() {
         return eventType;
     }

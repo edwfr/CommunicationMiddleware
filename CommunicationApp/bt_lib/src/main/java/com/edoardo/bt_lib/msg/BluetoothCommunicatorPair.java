@@ -12,8 +12,6 @@ public class BluetoothCommunicatorPair {
         this.msgObj = new BluetoothCommunicatorString(message);
     }
 
-    public BluetoothCommunicatorPair(){}
-
     public BluetoothCommunicatorString getMsgObj() {
         return msgObj;
     }

@@ -8,9 +8,6 @@ public class BluetoothCommunicatorString {
         this.content = message;
     }
 
-    public BluetoothCommunicatorString() {
-    }
-
     public String getContent() {
         return content;
     }
